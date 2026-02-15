@@ -7,7 +7,6 @@ from flask import Flask, request, jsonify
 # =================================================
 
 app = Flask(__name__)
-
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 
@@ -53,7 +52,7 @@ def init_db():
     cur.execute("""
     CREATE TABLE IF NOT EXISTS points_log (
         id SERIAL PRIMARY KEY,
-        player_uuid TEXT NOT NULL,
+        player_uuid TEXT REFERENCES players(uuid) ON DELETE CASCADE,
         points INTEGER NOT NULL,
         reason TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -74,8 +73,8 @@ def init_db():
     cur.execute("""
     CREATE TABLE IF NOT EXISTS active_missions (
         id SERIAL PRIMARY KEY,
-        player_uuid TEXT NOT NULL,
-        mission_id INTEGER NOT NULL,
+        player_uuid TEXT REFERENCES players(uuid) ON DELETE CASCADE,
+        mission_id INTEGER REFERENCES missions(id) ON DELETE CASCADE,
         progress INTEGER DEFAULT 0,
         required INTEGER DEFAULT 1,
         expires_at TIMESTAMP,
@@ -97,6 +96,10 @@ def init_db():
 @app.route("/register", methods=["POST"])
 def register():
     data = request.json
+
+    if not data or "uuid" not in data or "username" not in data:
+        return jsonify({"error": "Invalid request"}), 400
+
     uuid = data["uuid"]
     username = data["username"]
 
@@ -131,8 +134,12 @@ def register():
 @app.route("/add-points", methods=["POST"])
 def add_points():
     data = request.json
+
+    if not data or "uuid" not in data or "points" not in data:
+        return jsonify({"error": "Invalid request"}), 400
+
     uuid = data["uuid"]
-    points = data["points"]
+    points = int(data["points"])
     reason = data.get("reason", "mission")
 
     conn = get_db()
@@ -163,9 +170,7 @@ def add_points():
     cur.close()
     conn.close()
 
-    return jsonify({
-        "new_total": new_total
-    })
+    return jsonify({"new_total": new_total})
 
 
 # =================================================
@@ -189,15 +194,13 @@ def leaderboard():
     cur.close()
     conn.close()
 
-    results = []
-    for r in rows:
-        results.append({
+    return jsonify([
+        {
             "username": r[0],
             "points": r[1],
             "rating": r[2]
-        })
-
-    return jsonify(results)
+        } for r in rows
+    ])
 
 
 # =================================================
@@ -207,12 +210,37 @@ def leaderboard():
 @app.route("/assign-mission", methods=["POST"])
 def assign_mission():
     data = request.json
+
+    if not data or "uuid" not in data:
+        return jsonify({"error": "Invalid request"}), 400
+
     uuid = data["uuid"]
 
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("SELECT id, points FROM missions ORDER BY RANDOM() LIMIT 1;")
+    # Remove expired missions first
+    cur.execute("""
+        DELETE FROM active_missions
+        WHERE expires_at < NOW();
+    """)
+
+    # Check if player already has active mission
+    cur.execute("""
+        SELECT id FROM active_missions
+        WHERE player_uuid = %s
+        AND completed = FALSE
+        AND expires_at > NOW();
+    """, (uuid,))
+
+    existing = cur.fetchone()
+    if existing:
+        cur.close()
+        conn.close()
+        return jsonify({"error": "Active mission already exists"}), 400
+
+    # Pick random mission
+    cur.execute("SELECT id, name, points FROM missions ORDER BY RANDOM() LIMIT 1;")
     mission = cur.fetchone()
 
     if not mission:
@@ -220,7 +248,7 @@ def assign_mission():
         conn.close()
         return jsonify({"error": "No missions available"}), 400
 
-    mission_id = mission[0]
+    mission_id, name, points = mission
 
     cur.execute("""
         INSERT INTO active_missions (player_uuid, mission_id, expires_at)
@@ -236,7 +264,9 @@ def assign_mission():
 
     return jsonify({
         "active_mission_id": active_id,
-        "mission_id": mission_id
+        "mission_name": name,
+        "points": points,
+        "expires_in_minutes": 60
     })
 
 
