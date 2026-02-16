@@ -4,11 +4,12 @@ import uuid
 from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
+
 DB_PATH = "mission.db"
 
 
 # =====================================================
-# DATABASE INIT
+# DATABASE INIT (AUTO RUNS ON STARTUP)
 # =====================================================
 
 def init_db():
@@ -21,7 +22,9 @@ def init_db():
         uuid TEXT UNIQUE,
         username TEXT,
         total_points INTEGER DEFAULT 0,
-        influence_rating INTEGER DEFAULT 1000
+        influence_rating INTEGER DEFAULT 1000,
+        streak_count INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
@@ -30,29 +33,17 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
         difficulty TEXT,
-        base_points INTEGER
+        description TEXT,
+        objective TEXT,
+        tier1_required INTEGER,
+        tier2_required INTEGER,
+        tier3_required INTEGER,
+        base_points INTEGER,
+        tier1_points INTEGER,
+        tier2_points INTEGER,
+        tier3_points INTEGER
     )
     """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS sessions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT,
-        player_uuid TEXT,
-        mission_id INTEGER,
-        completed INTEGER DEFAULT 0
-    )
-    """)
-
-    # Seed missions if empty
-    cur.execute("SELECT COUNT(*) FROM missions")
-    if cur.fetchone()[0] == 0:
-        cur.execute("""
-        INSERT INTO missions (name, difficulty, base_points) VALUES
-        ('Spotlight Puller','easy',25),
-        ('Conversation Driver','medium',50),
-        ('Social Dominator','hard',100)
-        """)
 
     conn.commit()
     conn.close()
@@ -77,6 +68,7 @@ def home():
 def register():
 
     data = request.get_json(silent=True) or {}
+
     uuid_val = data.get("uuid")
     username = data.get("username")
 
@@ -92,12 +84,13 @@ def register():
     """, (uuid_val, username))
 
     cur.execute("""
-        UPDATE players SET username=? WHERE uuid=?
+        UPDATE players SET username = ?
+        WHERE uuid = ?
     """, (username, uuid_val))
 
     cur.execute("""
         SELECT influence_rating, total_points
-        FROM players WHERE uuid=?
+        FROM players WHERE uuid = ?
     """, (uuid_val,))
 
     row = cur.fetchone()
@@ -111,102 +104,33 @@ def register():
 
 
 # =====================================================
-# START MISSION
+# LEADERBOARD (SL JSON)
 # =====================================================
 
-@app.route("/start-mission", methods=["POST"])
-def start_mission():
-
-    data = request.get_json(silent=True) or {}
-    uuid_val = data.get("uuid")
+@app.route("/leaderboard")
+def leaderboard():
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT id, name, base_points
-        FROM missions
-        ORDER BY RANDOM()
-        LIMIT 1
+        SELECT username, total_points
+        FROM players
+        ORDER BY total_points DESC
+        LIMIT 10
     """)
 
-    mission = cur.fetchone()
-
-    if not mission:
-        return jsonify({"error": "No missions found"}), 400
-
-    session_id = str(uuid.uuid4())
-
-    cur.execute("""
-        INSERT INTO sessions (session_id, player_uuid, mission_id)
-        VALUES (?, ?, ?)
-    """, (session_id, uuid_val, mission[0]))
-
-    conn.commit()
+    rows = cur.fetchall()
     conn.close()
 
-    return jsonify({
-        "session_id": session_id,
-        "mission_name": mission[1],
-        "tier": 0
-    })
+    return jsonify([
+        {"username": r[0], "points": r[1]}
+        for r in rows
+    ])
 
 
 # =====================================================
-# COMPLETE MISSION
-# =====================================================
-
-@app.route("/complete-mission", methods=["POST"])
-def complete_mission():
-
-    data = request.get_json(silent=True) or {}
-    session_id = data.get("session_id")
-
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT mission_id, player_uuid
-        FROM sessions
-        WHERE session_id=? AND completed=0
-    """, (session_id,))
-
-    row = cur.fetchone()
-
-    if not row:
-        return jsonify({"error": "Invalid session"}), 400
-
-    mission_id, player_uuid = row
-
-    cur.execute("""
-        SELECT base_points FROM missions WHERE id=?
-    """, (mission_id,))
-
-    points = cur.fetchone()[0]
-
-    cur.execute("""
-        UPDATE players
-        SET total_points = total_points + ?
-        WHERE uuid=?
-    """, (points, player_uuid))
-
-    cur.execute("""
-        UPDATE sessions
-        SET completed=1
-        WHERE session_id=?
-    """, (session_id,))
-
-    conn.commit()
-    conn.close()
-
-    return jsonify({
-        "final_tier": 1,
-        "points_awarded": points
-    })
-
-
-# =====================================================
-# LEADERBOARD (SL SAFE)
+# PRETTY LEADERBOARD FOR SL (EMOJI SAFE)
 # =====================================================
 
 @app.route("/leaderboard/sl")
@@ -229,23 +153,71 @@ def leaderboard_sl():
     text += "🏆 SOCIAL MISSION RANKINGS\n"
     text += "━━━━━━━━━━━━━━━━━━━━\n\n"
 
-    medals = ["🥇","🥈","🥉"]
+    medals = ["🥇", "🥈", "🥉"]
 
-    for i, r in enumerate(rows):
+    i = 0
+    for r in rows:
         medal = medals[i] if i < 3 else "🔹"
         text += f"{medal} {r[0]} — {r[1]} pts\n"
+        i += 1
 
     text += "\nKeep climbing.\n"
     text += "━━━━━━━━━━━━━━━━━━━━"
 
     return Response(
-        '{"pretty_text": "' + text.replace('"','\\"') + '"}',
+        jsonify({"pretty_text": text}).get_data(as_text=True),
         mimetype="application/json; charset=utf-8"
     )
 
 
 # =====================================================
-# RUN
+# HTML LEADERBOARD (BROWSER)
+# =====================================================
+
+@app.route("/leaderboard/html")
+def leaderboard_html():
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT username, total_points
+        FROM players
+        ORDER BY total_points DESC
+    """)
+
+    rows = cur.fetchall()
+    conn.close()
+
+    html = """
+    <html>
+    <head>
+    <style>
+    body { font-family: Arial; background:#111; color:white; padding:40px; }
+    table { width:600px; border-collapse:collapse; }
+    th,td { padding:12px; border-bottom:1px solid #333; }
+    th { background:#222; }
+    tr:hover { background:#1e1e1e; }
+    </style>
+    </head>
+    <body>
+    <h1>🏆 Social Mission Leaderboard</h1>
+    <table>
+    <tr><th>Rank</th><th>Name</th><th>Points</th></tr>
+    """
+
+    rank = 1
+    for r in rows:
+        html += f"<tr><td>{rank}</td><td>{r[0]}</td><td>{r[1]}</td></tr>"
+        rank += 1
+
+    html += "</table></body></html>"
+
+    return html
+
+
+# =====================================================
+# START SERVER
 # =====================================================
 
 if __name__ == "__main__":
