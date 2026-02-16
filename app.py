@@ -404,6 +404,31 @@ def seed_missions():
 
     return "Missions seeded."
 
+@app.route("/missions")
+def list_missions():
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, name, difficulty, base_points
+        FROM missions
+        ORDER BY difficulty;
+    """)
+
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    html = "<h1>Mission List</h1><ul>"
+
+    for r in rows:
+        html += f"<li>{r[1]} ({r[2]}) - {r[3]} base points</li>"
+
+    html += "</ul>"
+
+    return html
+
 # =========================================================
 # RUN
 # =========================================================
