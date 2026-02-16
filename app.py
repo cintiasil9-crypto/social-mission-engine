@@ -1,34 +1,30 @@
-from flask import Flask, jsonify, request, Response
+import os
 import sqlite3
 import uuid
-import time
-import os
+from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
 
-DB_PATH = "mission_engine.db"
+DB_PATH = "mission.db"
 
 
-# ======================================================
-# DATABASE
-# ======================================================
+# =====================================================
+# DATABASE INIT (AUTO RUNS ON STARTUP)
+# =====================================================
 
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-@app.route("/init-db")
 def init_db():
-    conn = get_db()
+    conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS players (
-        uuid TEXT PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uuid TEXT UNIQUE,
         username TEXT,
-        total_points INTEGER DEFAULT 0
+        total_points INTEGER DEFAULT 0,
+        influence_rating INTEGER DEFAULT 1000,
+        streak_count INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
@@ -36,82 +32,50 @@ def init_db():
     CREATE TABLE IF NOT EXISTS missions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
+        difficulty TEXT,
         description TEXT,
         objective TEXT,
-        tier1 INTEGER,
-        tier2 INTEGER,
-        tier3 INTEGER
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS sessions (
-        session_id TEXT PRIMARY KEY,
-        player_uuid TEXT,
-        mission_id INTEGER,
-        progress INTEGER DEFAULT 0,
-        tier INTEGER DEFAULT 0,
-        started_at INTEGER
+        tier1_required INTEGER,
+        tier2_required INTEGER,
+        tier3_required INTEGER,
+        base_points INTEGER,
+        tier1_points INTEGER,
+        tier2_points INTEGER,
+        tier3_points INTEGER
     )
     """)
 
     conn.commit()
     conn.close()
 
-    return "DB Ready"
+init_db()
 
 
-# ======================================================
-# SEED MISSIONS
-# ======================================================
+# =====================================================
+# ROOT
+# =====================================================
 
-@app.route("/seed-missions")
-def seed():
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("DELETE FROM missions")
-
-    missions = [
-        ("Spotlight Puller",
-         "Pull attention and spark replies.",
-         "Get multiple people talking.",
-         10, 15, 25),
-
-        ("Conversation Driver",
-         "Drive group discussion forward.",
-         "Keep 3+ avatars engaged.",
-         20, 30, 50),
-
-        ("Social Dominator",
-         "Control the social flow.",
-         "Lead the room confidently.",
-         40, 60, 100),
-    ]
-
-    cur.executemany("""
-        INSERT INTO missions
-        (name, description, objective, tier1, tier2, tier3)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, missions)
-
-    conn.commit()
-    conn.close()
-
-    return "Seeded"
+@app.route("/")
+def home():
+    return "Social Mission Engine Running"
 
 
-# ======================================================
+# =====================================================
 # REGISTER
-# ======================================================
+# =====================================================
 
 @app.route("/register", methods=["POST"])
 def register():
-    data = request.get_json()
-    uuid_val = data["uuid"]
-    username = data["username"]
 
-    conn = get_db()
+    data = request.get_json(silent=True) or {}
+
+    uuid_val = data.get("uuid")
+    username = data.get("username")
+
+    if not uuid_val:
+        return jsonify({"error": "Missing UUID"}), 400
+
+    conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
     cur.execute("""
@@ -119,153 +83,60 @@ def register():
         VALUES (?, ?)
     """, (uuid_val, username))
 
-    conn.commit()
-    conn.close()
-
-    return jsonify({
-        "pretty_text":
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "✅ REGISTERED\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 {username}\n"
-        "━━━━━━━━━━━━━━━━━━━━"
-    })
-
-
-# ======================================================
-# START MISSION
-# ======================================================
-
-@app.route("/start-mission", methods=["POST"])
-def start_mission():
-    data = request.get_json()
-    player_uuid = data["uuid"]
-
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("SELECT * FROM missions ORDER BY RANDOM() LIMIT 1")
-    mission = cur.fetchone()
-
-    session_id = str(uuid.uuid4())
+    cur.execute("""
+        UPDATE players SET username = ?
+        WHERE uuid = ?
+    """, (username, uuid_val))
 
     cur.execute("""
-        INSERT INTO sessions
-        (session_id, player_uuid, mission_id, started_at)
-        VALUES (?, ?, ?, ?)
-    """, (session_id, player_uuid, mission["id"], int(time.time())))
+        SELECT influence_rating, total_points
+        FROM players WHERE uuid = ?
+    """, (uuid_val,))
 
+    row = cur.fetchone()
     conn.commit()
     conn.close()
 
-    pretty = (
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "🎯 NEW MISSION\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"📌 {mission['name']}\n\n"
-        f"{mission['description']}\n\n"
-        f"🥉 {mission['tier1']} pts\n"
-        f"🥈 {mission['tier2']} pts\n"
-        f"🥇 {mission['tier3']} pts\n"
-        "━━━━━━━━━━━━━━━━━━━━"
-    )
-
     return jsonify({
-        "session_id": session_id,
-        "pretty_text": pretty
+        "rating": row[0],
+        "points": row[1]
     })
 
 
-# ======================================================
-# COMPLETE TIER
-# ======================================================
+# =====================================================
+# LEADERBOARD (SL JSON)
+# =====================================================
 
-@app.route("/complete-tier", methods=["POST"])
-def complete_tier():
-    data = request.get_json()
-    session_id = data["session_id"]
+@app.route("/leaderboard")
+def leaderboard():
 
-    conn = get_db()
+    conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
-    cur.execute("SELECT * FROM sessions WHERE session_id=?", (session_id,))
-    session = cur.fetchone()
-
-    new_tier = session["tier"] + 1
-
     cur.execute("""
-        UPDATE sessions
-        SET tier=?
-        WHERE session_id=?
-    """, (new_tier, session_id))
+        SELECT username, total_points
+        FROM players
+        ORDER BY total_points DESC
+        LIMIT 10
+    """)
 
-    conn.commit()
+    rows = cur.fetchall()
     conn.close()
 
-    return jsonify({
-        "pretty_text":
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"⬆ Tier Advanced → {new_tier}\n"
-        "━━━━━━━━━━━━━━━━━━━━"
-    })
+    return jsonify([
+        {"username": r[0], "points": r[1]}
+        for r in rows
+    ])
 
 
-# ======================================================
-# COMPLETE MISSION
-# ======================================================
-
-@app.route("/complete-mission", methods=["POST"])
-def complete_mission():
-    data = request.get_json()
-    session_id = data["session_id"]
-
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("SELECT * FROM sessions WHERE session_id=?", (session_id,))
-    session = cur.fetchone()
-
-    cur.execute("SELECT * FROM missions WHERE id=?", (session["mission_id"],))
-    mission = cur.fetchone()
-
-    tier = session["tier"]
-
-    points = 0
-    if tier == 1:
-        points = mission["tier1"]
-    elif tier == 2:
-        points = mission["tier2"]
-    elif tier >= 3:
-        points = mission["tier3"]
-
-    cur.execute("""
-        UPDATE players
-        SET total_points = total_points + ?
-        WHERE uuid=?
-    """, (points, session["player_uuid"]))
-
-    cur.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
-
-    conn.commit()
-    conn.close()
-
-    return jsonify({
-        "pretty_text":
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "🏆 MISSION COMPLETE\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"💰 Points Earned: {points}\n"
-        "━━━━━━━━━━━━━━━━━━━━"
-    })
-
-
-# ======================================================
-# LEADERBOARD SL
-# ======================================================
+# =====================================================
+# PRETTY LEADERBOARD FOR SL (EMOJI SAFE)
+# =====================================================
 
 @app.route("/leaderboard/sl")
 def leaderboard_sl():
-    conn = get_db()
+
+    conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
     cur.execute("""
@@ -279,34 +150,40 @@ def leaderboard_sl():
     conn.close()
 
     text = "━━━━━━━━━━━━━━━━━━━━\n"
-    text += "🏆 MISSION LEADERBOARD\n"
+    text += "🏆 SOCIAL MISSION RANKINGS\n"
     text += "━━━━━━━━━━━━━━━━━━━━\n\n"
 
-    medals = ["🥇","🥈","🥉"]
+    medals = ["🥇", "🥈", "🥉"]
 
-    for i, r in enumerate(rows):
-        medal = medals[i] if i < 3 else " "
-        text += f"{medal} {r['username']} — {r['total_points']} pts\n"
+    i = 0
+    for r in rows:
+        medal = medals[i] if i < 3 else "🔹"
+        text += f"{medal} {r[0]} — {r[1]} pts\n"
+        i += 1
 
+    text += "\nKeep climbing.\n"
     text += "━━━━━━━━━━━━━━━━━━━━"
 
-    return jsonify({"pretty_text": text})
+    return Response(
+        jsonify({"pretty_text": text}).get_data(as_text=True),
+        mimetype="application/json; charset=utf-8"
+    )
 
 
-# ======================================================
-# LEADERBOARD HTML
-# ======================================================
+# =====================================================
+# HTML LEADERBOARD (BROWSER)
+# =====================================================
 
 @app.route("/leaderboard/html")
 def leaderboard_html():
-    conn = get_db()
+
+    conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
     cur.execute("""
         SELECT username, total_points
         FROM players
         ORDER BY total_points DESC
-        LIMIT 10
     """)
 
     rows = cur.fetchall()
@@ -315,37 +192,33 @@ def leaderboard_html():
     html = """
     <html>
     <head>
-    <meta http-equiv="refresh" content="60">
     <style>
-    body { font-family: Arial; background:#111; color:white; text-align:center; }
-    h1 { margin-top:40px; }
-    table { margin:auto; margin-top:30px; width:50%; border-collapse:collapse; }
-    th, td { padding:12px; border-bottom:1px solid #333; }
+    body { font-family: Arial; background:#111; color:white; padding:40px; }
+    table { width:600px; border-collapse:collapse; }
+    th,td { padding:12px; border-bottom:1px solid #333; }
     th { background:#222; }
+    tr:hover { background:#1e1e1e; }
     </style>
     </head>
     <body>
-    <h1>🏆 Mission Leaderboard</h1>
+    <h1>🏆 Social Mission Leaderboard</h1>
     <table>
-    <tr><th>Rank</th><th>Avatar</th><th>Points</th></tr>
+    <tr><th>Rank</th><th>Name</th><th>Points</th></tr>
     """
 
-    for i, r in enumerate(rows):
-        html += f"<tr><td>{i+1}</td><td>{r['username']}</td><td>{r['total_points']}</td></tr>"
+    rank = 1
+    for r in rows:
+        html += f"<tr><td>{rank}</td><td>{r[0]}</td><td>{r[1]}</td></tr>"
+        rank += 1
 
     html += "</table></body></html>"
 
     return html
 
 
-@app.route("/")
-def ok():
-    return "Mission Engine Running"
-
-
-# ======================================================
-# RENDER SAFE
-# ======================================================
+# =====================================================
+# START SERVER
+# =====================================================
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
