@@ -358,6 +358,32 @@ def leaderboard():
         for r in rows
     ])
 
+@app.route("/reset-missions")
+def reset_missions():
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("DROP TABLE IF EXISTS missions CASCADE;")
+
+    cur.execute("""
+    CREATE TABLE missions (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        difficulty TEXT NOT NULL,
+        base_points INTEGER NOT NULL,
+        tier1_points INTEGER NOT NULL,
+        tier2_points INTEGER NOT NULL,
+        tier3_points INTEGER NOT NULL
+    );
+    """)
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return "Missions table reset."
+
+
 @app.route("/seed-missions")
 def seed_missions():
     conn = get_db()
