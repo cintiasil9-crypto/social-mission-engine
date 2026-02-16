@@ -488,27 +488,6 @@ def reset_missions():
 
     return "Missions table reset."
 
-
-@app.route("/seed-missions")
-def seed_missions():
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("""
-    INSERT INTO missions (name, difficulty, base_points, tier1_points, tier2_points, tier3_points)
-    VALUES
-    ('Spotlight Puller', 'easy', 25, 10, 15, 25),
-    ('Conversation Driver', 'medium', 50, 20, 30, 50),
-    ('Social Dominator', 'hard', 100, 40, 60, 100)
-    ON CONFLICT DO NOTHING;
-    """)
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    return "Missions seeded."
-
 @app.route("/admin/missions")
 def admin_missions():
 
