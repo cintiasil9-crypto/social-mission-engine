@@ -33,9 +33,11 @@ def init_db():
     CREATE TABLE IF NOT EXISTS missions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
+        category TEXT,
         difficulty TEXT,
         base_points INTEGER
-    )
+)
+
     """)
 
     cur.execute("""
@@ -182,59 +184,65 @@ def register():
 # RANDOM MISSION ASSIGNMENT
 # =====================================================
 
-def get_random_mission():
+def get_random_mission(player_uuid):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
-    cur.execute("SELECT id, name, difficulty FROM missions")
+    # Get last mission played
+    cur.execute("""
+        SELECT m.id, m.category
+        FROM mission_sessions ms
+        JOIN missions m ON ms.mission_id = m.id
+        WHERE ms.player_uuid = ?
+        ORDER BY ms.start_time DESC
+        LIMIT 1
+    """, (player_uuid,))
+    last = cur.fetchone()
+
+    last_id = None
+    last_category = None
+
+    if last:
+        last_id = last[0]
+        last_category = last[1]
+
+    cur.execute("SELECT id, name, category, difficulty FROM missions")
     missions = cur.fetchall()
 
-    if not missions:
-        return None
+    # Filter out last mission
+    if last_id:
+        missions = [m for m in missions if m[0] != last_id]
 
+    # Prevent same category twice in row
+    if last_category:
+        category_counts = 0
+        cur.execute("""
+            SELECT m.category
+            FROM mission_sessions ms
+            JOIN missions m ON ms.mission_id = m.id
+            WHERE ms.player_uuid = ?
+            ORDER BY ms.start_time DESC
+            LIMIT 2
+        """, (player_uuid,))
+        last_two = cur.fetchall()
+
+        if len(last_two) == 2 and last_two[0][0] == last_two[1][0]:
+            missions = [m for m in missions if m[2] != last_two[0][0]]
+
+    # Weighted random by difficulty
     weights = []
     for m in missions:
-        if m[2] == "Easy":
+        if m[3] == "Easy":
             weights.append(0.5)
-        elif m[2] == "Medium":
+        elif m[3] == "Medium":
             weights.append(0.35)
         else:
             weights.append(0.15)
 
     mission = random.choices(missions, weights=weights, k=1)[0]
+
     conn.close()
     return mission
-
-
-@app.route("/start-mission", methods=["POST"])
-def start_mission():
-    data = request.get_json()
-    uuid_val = data.get("uuid")
-
-    mission = get_random_mission()
-    if not mission:
-        return jsonify({"error": "No missions configured"}), 500
-
-    session_id = str(uuid.uuid4())
-    start_time = int(time.time())
-
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-
-    cur.execute("""
-        INSERT INTO mission_sessions (id, player_uuid, mission_id, start_time)
-        VALUES (?, ?, ?, ?)
-    """, (session_id, uuid_val, mission[0], start_time))
-
-    conn.commit()
-    conn.close()
-
-    return jsonify({
-        "session_id": session_id,
-        "mission_name": mission[1],
-        "difficulty": mission[2]
-    })
-
 
 # =====================================================
 # COMPLETE MISSION
@@ -308,6 +316,43 @@ def complete_mission():
         "title": get_title(new_influence)
     })
 
+# =====================================================
+# START MISSION
+# =====================================================
+
+@app.route("/start-mission", methods=["POST"])
+def start_mission():
+    data = request.get_json()
+    uuid_val = data.get("uuid")
+
+    if not uuid_val:
+        return jsonify({"error": "Missing UUID"}), 400
+
+    mission = get_random_mission(uuid_val)
+
+    if not mission:
+        return jsonify({"error": "No missions available"}), 500
+
+    session_id = str(uuid.uuid4())
+    start_time = int(time.time())
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO mission_sessions (id, player_uuid, mission_id, start_time)
+        VALUES (?, ?, ?, ?)
+    """, (session_id, uuid_val, mission[0], start_time))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "session_id": session_id,
+        "mission_name": mission[1],
+        "category": mission[2],
+        "difficulty": mission[3]
+    })
 
 # =====================================================
 # LEADERBOARDS
@@ -371,40 +416,40 @@ def seed_missions():
 
     missions = [
         # IGNITION
-        ("Engagement Magnet", "Easy", 50),
-        ("Topic Seeder", "Easy", 50),
-        ("Spotlight Puller", "Medium", 100),
-        ("Crowd Activator", "Medium", 100),
-        ("Question Instigator", "Easy", 50),
-        ("Momentum Spark", "Medium", 100),
-        ("Social Catalyst", "Hard", 200),
-        ("Echo Trigger", "Medium", 100),
+        ("Engagement Magnet", "Ignition", "Easy", 50),
+        ("Topic Seeder", "Ignition", "Easy", 50),
+        ("Spotlight Puller", "Ignition", "Medium", 100),
+        ("Crowd Activator", "Ignition", "Medium", 100),
+        ("Question Instigator", "Ignition", "Easy", 50),
+        ("Momentum Spark", "Ignition", "Medium", 100),
+        ("Social Catalyst", "Ignition", "Hard", 200),
+        ("Echo Trigger", "Ignition", "Medium", 100),
 
         # SUSTAINED
-        ("Energy Architect", "Medium", 100),
-        ("Pulse Amplifier", "Hard", 200),
-        ("Room Stabilizer", "Medium", 100),
-        ("Conversation Driver", "Medium", 100),
-        ("Momentum Keeper", "Hard", 200),
-        ("Flow Controller", "Medium", 100),
-        ("Atmosphere Builder", "Medium", 100),
-        ("Activity Booster", "Hard", 200),
+         ("Energy Architect", "Sustained", "Medium", 100),
+        ("Pulse Amplifier", "Sustained", "Hard", 200),
+        ("Room Stabilizer", "Sustained", "Medium", 100),
+        ("Conversation Driver", "Sustained", "Medium", 100),
+        ("Momentum Keeper", "Sustained", "Hard", 200),
+        ("Flow Controller", "Sustained", "Medium", 100),
+        ("Atmosphere Builder", "Sustained", "Medium", 100),
+        ("Activity Booster", "Sustained", "Hard", 200),
 
         # CHAIN
-        ("Debate Instigator", "Hard", 200),
-        ("Rivalry Builder", "Hard", 200),
-        ("Argument Architect", "Hard", 200),
-        ("Conflict Catalyst", "Hard", 200),
-    ]
+        ("Debate Instigator", "Chain", "Hard", 200),
+        ("Rivalry Builder", "Chain", "Hard", 200),
+        ("Argument Architect", "Chain", "Hard", 200),
+        ("Conflict Catalyst", "Chain", "Hard", 200),
+]
 
     inserted = 0
 
-    for name, difficulty, base_points in missions:
-        cur.execute("""
-            INSERT INTO missions (name, difficulty, base_points)
-            VALUES (?, ?, ?)
-        """, (name, difficulty, base_points))
-        inserted += 1
+    for name, category, difficulty, base_points in missions:
+    cur.execute("""
+        INSERT INTO missions (name, category, difficulty, base_points)
+        VALUES (?, ?, ?, ?)
+    """, (name, category, difficulty, base_points))
+    inserted += 1
 
     conn.commit()
     conn.close()
@@ -412,6 +457,44 @@ def seed_missions():
     return jsonify({
         "status": "Seed complete",
         "missions_inserted": inserted
+    })
+    
+# =====================================================
+# START MISSION
+# =====================================================
+
+@app.route("/start-mission", methods=["POST"])
+def start_mission():
+    data = request.get_json()
+    uuid_val = data.get("uuid")
+
+    if not uuid_val:
+        return jsonify({"error": "Missing UUID"}), 400
+
+    mission = get_random_mission(uuid_val)
+
+    if not mission:
+        return jsonify({"error": "No missions available"}), 500
+
+    session_id = str(uuid.uuid4())
+    start_time = int(time.time())
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO mission_sessions (id, player_uuid, mission_id, start_time)
+        VALUES (?, ?, ?, ?)
+    """, (session_id, uuid_val, mission[0], start_time))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "session_id": session_id,
+        "mission_name": mission[1],
+        "category": mission[2],
+        "difficulty": mission[3]
     })
 
 # =====================================================
