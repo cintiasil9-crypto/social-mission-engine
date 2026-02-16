@@ -27,6 +27,16 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
+    
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS mission_sessions (
+        id TEXT PRIMARY KEY,
+        player_uuid TEXT,
+        mission_name TEXT,
+        completed INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS missions (
@@ -215,6 +225,78 @@ def leaderboard_html():
 
     return html
 
+@app.route("/start-mission", methods=["POST"])
+def start_mission():
+
+    data = request.get_json(silent=True) or {}
+    uuid_val = data.get("uuid")
+
+    if not uuid_val:
+        return jsonify({"error": "Missing UUID"}), 400
+
+    session_id = str(uuid.uuid4())
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO mission_sessions (id, player_uuid, mission_name)
+        VALUES (?, ?, ?)
+    """, (session_id, uuid_val, "Spotlight Puller"))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "session_id": session_id,
+        "pretty_text": "🎯 Mission Started: Spotlight Puller\nGet multiple people replying in chat."
+    })
+
+@app.route("/complete-mission", methods=["POST"])
+def complete_mission():
+
+    data = request.get_json(silent=True) or {}
+    session_id = data.get("session_id")
+
+    if not session_id:
+        return jsonify({"error": "Missing session_id"}), 400
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT player_uuid FROM mission_sessions
+        WHERE id = ? AND completed = 0
+    """, (session_id,))
+
+    row = cur.fetchone()
+
+    if not row:
+        conn.close()
+        return jsonify({"error": "Invalid or completed session"}), 400
+
+    player_uuid = row[0]
+
+    # Mark completed
+    cur.execute("""
+        UPDATE mission_sessions
+        SET completed = 1
+        WHERE id = ?
+    """, (session_id,))
+
+    # Award points
+    cur.execute("""
+        UPDATE players
+        SET total_points = total_points + 100
+        WHERE uuid = ?
+    """, (player_uuid,))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "pretty_text": "🏆 Mission Complete!\n+100 Points Awarded."
+    })
 
 # =====================================================
 # START SERVER
