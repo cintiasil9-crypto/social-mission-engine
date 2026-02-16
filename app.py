@@ -404,15 +404,23 @@ def seed_missions():
 
     return "Missions seeded."
 
-@app.route("/missions")
-def list_missions():
+@app.route("/admin/missions")
+def admin_missions():
+
     conn = get_db()
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT id, name, difficulty, base_points
+        SELECT
+            id,
+            name,
+            difficulty,
+            base_points,
+            tier1_points,
+            tier2_points,
+            tier3_points
         FROM missions
-        ORDER BY difficulty;
+        ORDER BY id;
     """)
 
     rows = cur.fetchall()
@@ -420,12 +428,91 @@ def list_missions():
     cur.close()
     conn.close()
 
-    html = "<h1>Mission List</h1><ul>"
+    html = """
+    <html>
+    <head>
+        <title>Mission Admin</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                background-color: #f4f6f9;
+                padding: 40px;
+            }
+
+            h1 {
+                margin-bottom: 20px;
+            }
+
+            table {
+                border-collapse: collapse;
+                width: 100%;
+                background: white;
+                box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+            }
+
+            th {
+                background: #1f2937;
+                color: white;
+                padding: 12px;
+                text-align: left;
+                font-size: 14px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }
+
+            td {
+                padding: 10px;
+                border-bottom: 1px solid #e5e7eb;
+                font-size: 14px;
+            }
+
+            tr:nth-child(even) {
+                background-color: #f9fafb;
+            }
+
+            tr:hover {
+                background-color: #eef2ff;
+            }
+
+            .easy { color: #16a34a; font-weight: bold; }
+            .medium { color: #d97706; font-weight: bold; }
+            .hard { color: #dc2626; font-weight: bold; }
+        </style>
+    </head>
+    <body>
+        <h1>Mission Configuration Table</h1>
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Difficulty</th>
+                <th>Base Points</th>
+                <th>Tier 1</th>
+                <th>Tier 2</th>
+                <th>Tier 3</th>
+            </tr>
+    """
 
     for r in rows:
-        html += f"<li>{r[1]} ({r[2]}) - {r[3]} base points</li>"
+        diff_class = r[2]
 
-    html += "</ul>"
+        html += f"""
+            <tr>
+                <td>{r[0]}</td>
+                <td>{r[1]}</td>
+                <td class="{diff_class}">{r[2]}</td>
+                <td>{r[3]}</td>
+                <td>{r[4]}</td>
+                <td>{r[5]}</td>
+                <td>{r[6]}</td>
+            </tr>
+        """
+
+    html += """
+        </table>
+    </body>
+    </html>
+    """
 
     return html
 
