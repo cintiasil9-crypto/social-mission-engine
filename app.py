@@ -516,6 +516,127 @@ def admin_missions():
 
     return html
 
+@app.route("/admin/players")
+def admin_players():
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            id,
+            username,
+            uuid,
+            total_points,
+            influence_rating,
+            streak_count,
+            created_at
+        FROM players
+        ORDER BY total_points DESC;
+    """)
+
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    html = """
+    <html>
+    <head>
+        <title>Player Admin</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                background-color: #f4f6f9;
+                padding: 40px;
+            }
+
+            h1 {
+                margin-bottom: 20px;
+            }
+
+            table {
+                border-collapse: collapse;
+                width: 100%;
+                background: white;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            }
+
+            th {
+                background: #111827;
+                color: white;
+                padding: 12px;
+                text-align: left;
+                font-size: 14px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }
+
+            td {
+                padding: 10px;
+                border-bottom: 1px solid #e5e7eb;
+                font-size: 14px;
+            }
+
+            tr:nth-child(even) {
+                background-color: #f9fafb;
+            }
+
+            tr:hover {
+                background-color: #eef2ff;
+            }
+
+            .points {
+                font-weight: bold;
+                color: #2563eb;
+            }
+
+            .rating {
+                color: #7c3aed;
+                font-weight: bold;
+            }
+
+            .uuid {
+                font-size: 11px;
+                color: #6b7280;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Registered Avatars</h1>
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>Username</th>
+                <th>UUID</th>
+                <th>Total Points</th>
+                <th>Influence Rating</th>
+                <th>Streak</th>
+                <th>Created</th>
+            </tr>
+    """
+
+    for r in rows:
+        html += f"""
+            <tr>
+                <td>{r[0]}</td>
+                <td>{r[1]}</td>
+                <td class="uuid">{r[2]}</td>
+                <td class="points">{r[3]}</td>
+                <td class="rating">{r[4]}</td>
+                <td>{r[5]}</td>
+                <td>{r[6]}</td>
+            </tr>
+        """
+
+    html += """
+        </table>
+    </body>
+    </html>
+    """
+
+    return html
+
 # =========================================================
 # RUN
 # =========================================================
