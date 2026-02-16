@@ -1,15 +1,18 @@
 import os
 import sqlite3
 import uuid
-from flask import Flask, request, jsonify, Response
+import random
+import time
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
-
 DB_PATH = "mission.db"
+
+MISSION_DURATION = 3600  # 1 hour
 
 
 # =====================================================
-# DATABASE INIT (AUTO RUNS ON STARTUP)
+# DATABASE INIT
 # =====================================================
 
 def init_db():
@@ -18,22 +21,10 @@ def init_db():
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS players (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        uuid TEXT UNIQUE,
+        uuid TEXT PRIMARY KEY,
         username TEXT,
         total_points INTEGER DEFAULT 0,
-        influence_rating INTEGER DEFAULT 1000,
-        streak_count INTEGER DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-    
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS mission_sessions (
-        id TEXT PRIMARY KEY,
-        player_uuid TEXT,
-        mission_name TEXT,
-        completed INTEGER DEFAULT 0,
+        influence REAL DEFAULT 1000,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
@@ -43,31 +34,108 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
         difficulty TEXT,
-        description TEXT,
-        objective TEXT,
-        tier1_required INTEGER,
-        tier2_required INTEGER,
-        tier3_required INTEGER,
-        base_points INTEGER,
-        tier1_points INTEGER,
-        tier2_points INTEGER,
-        tier3_points INTEGER
+        base_points INTEGER
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS mission_sessions (
+        id TEXT PRIMARY KEY,
+        player_uuid TEXT,
+        mission_id INTEGER,
+        start_time INTEGER,
+        completed INTEGER DEFAULT 0,
+        success INTEGER DEFAULT 0,
+        FOREIGN KEY(player_uuid) REFERENCES players(uuid)
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS mission_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        player_uuid TEXT,
+        difficulty TEXT,
+        success INTEGER,
+        timestamp INTEGER
     )
     """)
 
     conn.commit()
     conn.close()
 
+
 init_db()
 
 
 # =====================================================
-# ROOT
+# TITLE SYSTEM
 # =====================================================
 
-@app.route("/")
-def home():
-    return "Social Mission Engine Running"
+def get_title(influence):
+    if influence < 500:
+        return "Silent Echo"
+    elif influence < 750:
+        return "Static Speaker"
+    elif influence < 1000:
+        return "Room Participant"
+    elif influence < 1200:
+        return "Conversation Starter"
+    elif influence < 1400:
+        return "Engagement Builder"
+    elif influence < 1600:
+        return "Discussion Driver"
+    elif influence < 1800:
+        return "Social Architect"
+    elif influence < 2000:
+        return "Room Influencer"
+    elif influence < 2200:
+        return "Momentum Master"
+    else:
+        return "Community Influencer"
+
+
+# =====================================================
+# INFLUENCE CALCULATION
+# =====================================================
+
+def recalc_influence(player_uuid):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT difficulty, success
+        FROM mission_history
+        WHERE player_uuid = ?
+        ORDER BY timestamp DESC
+        LIMIT 50
+    """, (player_uuid,))
+    rows = cur.fetchall()
+
+    if not rows:
+        return 1000
+
+    successes = 0
+    total = len(rows)
+    weight_sum = 0
+
+    for diff, success in rows:
+        weight = 1.0
+        if diff == "Medium":
+            weight = 1.2
+        elif diff == "Hard":
+            weight = 1.5
+
+        weight_sum += weight
+        if success:
+            successes += 1
+
+    sr = successes / total
+    avg_weight = weight_sum / total
+
+    influence = 1000 + (1500 * (sr - 0.5) * (avg_weight / 1.2))
+
+    conn.close()
+    return max(0, min(2500, influence))
 
 
 # =====================================================
@@ -76,9 +144,7 @@ def home():
 
 @app.route("/register", methods=["POST"])
 def register():
-
-    data = request.get_json(silent=True) or {}
-
+    data = request.get_json()
     uuid_val = data.get("uuid")
     username = data.get("username")
 
@@ -98,208 +164,267 @@ def register():
         WHERE uuid = ?
     """, (username, uuid_val))
 
-    cur.execute("""
-        SELECT influence_rating, total_points
-        FROM players WHERE uuid = ?
-    """, (uuid_val,))
-
-    row = cur.fetchone()
     conn.commit()
+
+    cur.execute("SELECT influence, total_points FROM players WHERE uuid = ?", (uuid_val,))
+    row = cur.fetchone()
+
     conn.close()
 
     return jsonify({
-        "rating": row[0],
-        "points": row[1]
+        "influence": row[0],
+        "points": row[1],
+        "title": get_title(row[0])
     })
 
 
 # =====================================================
-# LEADERBOARD (SL JSON)
+# RANDOM MISSION ASSIGNMENT
 # =====================================================
 
-@app.route("/leaderboard")
-def leaderboard():
-
+def get_random_mission():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT username, total_points
-        FROM players
-        ORDER BY total_points DESC
-        LIMIT 10
-    """)
+    cur.execute("SELECT id, name, difficulty FROM missions")
+    missions = cur.fetchall()
 
-    rows = cur.fetchall()
+    if not missions:
+        return None
+
+    weights = []
+    for m in missions:
+        if m[2] == "Easy":
+            weights.append(0.5)
+        elif m[2] == "Medium":
+            weights.append(0.35)
+        else:
+            weights.append(0.15)
+
+    mission = random.choices(missions, weights=weights, k=1)[0]
     conn.close()
+    return mission
 
-    return jsonify([
-        {"username": r[0], "points": r[1]}
-        for r in rows
-    ])
-
-
-# =====================================================
-# PRETTY LEADERBOARD FOR SL (EMOJI SAFE)
-# =====================================================
-
-@app.route("/leaderboard/sl")
-def leaderboard_sl():
-
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT username, total_points
-        FROM players
-        ORDER BY total_points DESC
-        LIMIT 10
-    """)
-
-    rows = cur.fetchall()
-    conn.close()
-
-    text = "━━━━━━━━━━━━━━━━━━━━\n"
-    text += "🏆 SOCIAL MISSION RANKINGS\n"
-    text += "━━━━━━━━━━━━━━━━━━━━\n\n"
-
-    medals = ["🥇", "🥈", "🥉"]
-
-    i = 0
-    for r in rows:
-        medal = medals[i] if i < 3 else "🔹"
-        text += f"{medal} {r[0]} — {r[1]} pts\n"
-        i += 1
-
-    text += "\nKeep climbing.\n"
-    text += "━━━━━━━━━━━━━━━━━━━━"
-
-    return Response(
-        jsonify({"pretty_text": text}).get_data(as_text=True),
-        mimetype="application/json; charset=utf-8"
-    )
-
-
-# =====================================================
-# HTML LEADERBOARD (BROWSER)
-# =====================================================
-
-@app.route("/leaderboard/html")
-def leaderboard_html():
-
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT username, total_points
-        FROM players
-        ORDER BY total_points DESC
-    """)
-
-    rows = cur.fetchall()
-    conn.close()
-
-    html = """
-    <html>
-    <head>
-    <style>
-    body { font-family: Arial; background:#111; color:white; padding:40px; }
-    table { width:600px; border-collapse:collapse; }
-    th,td { padding:12px; border-bottom:1px solid #333; }
-    th { background:#222; }
-    tr:hover { background:#1e1e1e; }
-    </style>
-    </head>
-    <body>
-    <h1>🏆 Social Mission Leaderboard</h1>
-    <table>
-    <tr><th>Rank</th><th>Name</th><th>Points</th></tr>
-    """
-
-    rank = 1
-    for r in rows:
-        html += f"<tr><td>{rank}</td><td>{r[0]}</td><td>{r[1]}</td></tr>"
-        rank += 1
-
-    html += "</table></body></html>"
-
-    return html
 
 @app.route("/start-mission", methods=["POST"])
 def start_mission():
-
-    data = request.get_json(silent=True) or {}
+    data = request.get_json()
     uuid_val = data.get("uuid")
 
-    if not uuid_val:
-        return jsonify({"error": "Missing UUID"}), 400
+    mission = get_random_mission()
+    if not mission:
+        return jsonify({"error": "No missions configured"}), 500
 
     session_id = str(uuid.uuid4())
+    start_time = int(time.time())
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
     cur.execute("""
-        INSERT INTO mission_sessions (id, player_uuid, mission_name)
-        VALUES (?, ?, ?)
-    """, (session_id, uuid_val, "Spotlight Puller"))
+        INSERT INTO mission_sessions (id, player_uuid, mission_id, start_time)
+        VALUES (?, ?, ?, ?)
+    """, (session_id, uuid_val, mission[0], start_time))
 
     conn.commit()
     conn.close()
 
     return jsonify({
         "session_id": session_id,
-        "pretty_text": "🎯 Mission Started: Spotlight Puller\nGet multiple people replying in chat."
+        "mission_name": mission[1],
+        "difficulty": mission[2]
     })
+
+
+# =====================================================
+# COMPLETE MISSION
+# =====================================================
 
 @app.route("/complete-mission", methods=["POST"])
 def complete_mission():
-
-    data = request.get_json(silent=True) or {}
+    data = request.get_json()
     session_id = data.get("session_id")
-
-    if not session_id:
-        return jsonify({"error": "Missing session_id"}), 400
+    success = data.get("success")  # True or False
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT player_uuid FROM mission_sessions
+        SELECT player_uuid, mission_id, start_time
+        FROM mission_sessions
         WHERE id = ? AND completed = 0
     """, (session_id,))
-
     row = cur.fetchone()
 
     if not row:
         conn.close()
-        return jsonify({"error": "Invalid or completed session"}), 400
+        return jsonify({"error": "Invalid session"}), 400
 
-    player_uuid = row[0]
+    player_uuid, mission_id, start_time = row
 
-    # Mark completed
+    if int(time.time()) - start_time > MISSION_DURATION:
+        success = False
+
+    cur.execute("SELECT difficulty, base_points FROM missions WHERE id = ?", (mission_id,))
+    mission = cur.fetchone()
+
+    difficulty = mission[0]
+    base_points = mission[1]
+
+    if success:
+        cur.execute("""
+            UPDATE players
+            SET total_points = total_points + ?
+            WHERE uuid = ?
+        """, (base_points, player_uuid))
+
+    cur.execute("""
+        INSERT INTO mission_history (player_uuid, difficulty, success, timestamp)
+        VALUES (?, ?, ?, ?)
+    """, (player_uuid, difficulty, int(success), int(time.time())))
+
     cur.execute("""
         UPDATE mission_sessions
-        SET completed = 1
+        SET completed = 1, success = ?
         WHERE id = ?
-    """, (session_id,))
+    """, (int(success), session_id))
 
-    # Award points
+    conn.commit()
+
+    new_influence = recalc_influence(player_uuid)
+
     cur.execute("""
         UPDATE players
-        SET total_points = total_points + 100
+        SET influence = ?
         WHERE uuid = ?
-    """, (player_uuid,))
+    """, (new_influence, player_uuid))
 
     conn.commit()
     conn.close()
 
     return jsonify({
-        "pretty_text": "🏆 Mission Complete!\n+100 Points Awarded."
+        "success": success,
+        "influence": new_influence,
+        "title": get_title(new_influence)
+    })
+
+
+# =====================================================
+# LEADERBOARDS
+# =====================================================
+
+@app.route("/leaderboard/points")
+def leaderboard_points():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT username, total_points
+        FROM players
+        ORDER BY total_points DESC
+        LIMIT 50
+    """)
+    rows = cur.fetchall()
+    conn.close()
+
+    return jsonify(rows)
+
+
+@app.route("/leaderboard/influence")
+def leaderboard_influence():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT username, influence
+        FROM players
+        ORDER BY influence DESC
+        LIMIT 50
+    """)
+    rows = cur.fetchall()
+    conn.close()
+
+    return jsonify(rows)
+
+# =====================================================
+# SEED MISSIONS ENDPOINT
+# =====================================================
+
+@app.route("/seed-missions", methods=["POST"])
+def seed_missions():
+    data = request.get_json(silent=True) or {}
+
+    secret = data.get("secret")
+    reset = data.get("reset", False)
+
+    # Simple protection so random users can't seed
+    ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "changeme")
+
+    if secret != ADMIN_SECRET:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    if reset:
+        cur.execute("DELETE FROM missions")
+
+    missions = [
+        # IGNITION
+        ("Engagement Magnet", "Easy", 50),
+        ("Topic Seeder", "Easy", 50),
+        ("Spotlight Puller", "Medium", 100),
+        ("Crowd Activator", "Medium", 100),
+        ("Question Instigator", "Easy", 50),
+        ("Momentum Spark", "Medium", 100),
+        ("Social Catalyst", "Hard", 200),
+        ("Echo Trigger", "Medium", 100),
+
+        # SUSTAINED
+        ("Energy Architect", "Medium", 100),
+        ("Pulse Amplifier", "Hard", 200),
+        ("Room Stabilizer", "Medium", 100),
+        ("Conversation Driver", "Medium", 100),
+        ("Momentum Keeper", "Hard", 200),
+        ("Flow Controller", "Medium", 100),
+        ("Atmosphere Builder", "Medium", 100),
+        ("Activity Booster", "Hard", 200),
+
+        # CHAIN
+        ("Debate Instigator", "Hard", 200),
+        ("Rivalry Builder", "Hard", 200),
+        ("Argument Architect", "Hard", 200),
+        ("Conflict Catalyst", "Hard", 200),
+    ]
+
+    inserted = 0
+
+    for name, difficulty, base_points in missions:
+        cur.execute("""
+            INSERT INTO missions (name, difficulty, base_points)
+            VALUES (?, ?, ?)
+        """, (name, difficulty, base_points))
+        inserted += 1
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "status": "Seed complete",
+        "missions_inserted": inserted
     })
 
 # =====================================================
-# START SERVER
+# ROOT
+# =====================================================
+
+@app.route("/")
+def home():
+    return "Social Mission Engine Running"
+
+
+# =====================================================
+# RUN
 # =====================================================
 
 if __name__ == "__main__":
