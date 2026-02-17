@@ -458,44 +458,6 @@ def seed_missions():
         "missions_inserted": inserted
     })
 
-    
-# =====================================================
-# START MISSION
-# =====================================================
-
-@app.route("/start-mission", methods=["POST"])
-def start_mission():
-    data = request.get_json()
-    uuid_val = data.get("uuid")
-
-    if not uuid_val:
-        return jsonify({"error": "Missing UUID"}), 400
-
-    mission = get_random_mission(uuid_val)
-
-    if not mission:
-        return jsonify({"error": "No missions available"}), 500
-
-    session_id = str(uuid.uuid4())
-    start_time = int(time.time())
-
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-
-    cur.execute("""
-        INSERT INTO mission_sessions (id, player_uuid, mission_id, start_time)
-        VALUES (?, ?, ?, ?)
-    """, (session_id, uuid_val, mission[0], start_time))
-
-    conn.commit()
-    conn.close()
-
-    return jsonify({
-        "session_id": session_id,
-        "mission_name": mission[1],
-        "category": mission[2],
-        "difficulty": mission[3]
-    })
 
 # =====================================================
 # ROOT
