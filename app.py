@@ -402,7 +402,6 @@ def seed_missions():
     secret = data.get("secret")
     reset = data.get("reset", False)
 
-    # Simple protection so random users can't seed
     ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "changeme")
 
     if secret != ADMIN_SECRET:
@@ -414,43 +413,42 @@ def seed_missions():
     if reset:
         cur.execute("DELETE FROM missions")
 
-missions = [
-    # IGNITION
-    ("Engagement Magnet", "Ignition", "Easy", 50),
-    ("Topic Seeder", "Ignition", "Easy", 50),
-    ("Spotlight Puller", "Ignition", "Medium", 100),
-    ("Crowd Activator", "Ignition", "Medium", 100),
-    ("Question Instigator", "Ignition", "Easy", 50),
-    ("Momentum Spark", "Ignition", "Medium", 100),
-    ("Social Catalyst", "Ignition", "Hard", 200),
-    ("Echo Trigger", "Ignition", "Medium", 100),
+    missions = [
+        # IGNITION
+        ("Engagement Magnet", "Ignition", "Easy", 50),
+        ("Topic Seeder", "Ignition", "Easy", 50),
+        ("Spotlight Puller", "Ignition", "Medium", 100),
+        ("Crowd Activator", "Ignition", "Medium", 100),
+        ("Question Instigator", "Ignition", "Easy", 50),
+        ("Momentum Spark", "Ignition", "Medium", 100),
+        ("Social Catalyst", "Ignition", "Hard", 200),
+        ("Echo Trigger", "Ignition", "Medium", 100),
 
-    # SUSTAINED
-    ("Energy Architect", "Sustained", "Medium", 100),
-    ("Pulse Amplifier", "Sustained", "Hard", 200),
-    ("Room Stabilizer", "Sustained", "Medium", 100),
-    ("Conversation Driver", "Sustained", "Medium", 100),
-    ("Momentum Keeper", "Sustained", "Hard", 200),
-    ("Flow Controller", "Sustained", "Medium", 100),
-    ("Atmosphere Builder", "Sustained", "Medium", 100),
-    ("Activity Booster", "Sustained", "Hard", 200),
+        # SUSTAINED
+        ("Energy Architect", "Sustained", "Medium", 100),
+        ("Pulse Amplifier", "Sustained", "Hard", 200),
+        ("Room Stabilizer", "Sustained", "Medium", 100),
+        ("Conversation Driver", "Sustained", "Medium", 100),
+        ("Momentum Keeper", "Sustained", "Hard", 200),
+        ("Flow Controller", "Sustained", "Medium", 100),
+        ("Atmosphere Builder", "Sustained", "Medium", 100),
+        ("Activity Booster", "Sustained", "Hard", 200),
 
-    # CHAIN
-    ("Debate Instigator", "Chain", "Hard", 200),
-    ("Rivalry Builder", "Chain", "Hard", 200),
-    ("Argument Architect", "Chain", "Hard", 200),
-    ("Conflict Catalyst", "Chain", "Hard", 200),
-]
+        # CHAIN
+        ("Debate Instigator", "Chain", "Hard", 200),
+        ("Rivalry Builder", "Chain", "Hard", 200),
+        ("Argument Architect", "Chain", "Hard", 200),
+        ("Conflict Catalyst", "Chain", "Hard", 200),
+    ]
 
-inserted = 0
+    inserted = 0
 
-for name, category, difficulty, base_points in missions:
-    cur.execute("""
-        INSERT INTO missions (name, category, difficulty, base_points)
-        VALUES (?, ?, ?, ?)
-    """, (name, category, difficulty, base_points))
-    inserted += 1
-
+    for name, category, difficulty, base_points in missions:
+        cur.execute("""
+            INSERT INTO missions (name, category, difficulty, base_points)
+            VALUES (?, ?, ?, ?)
+        """, (name, category, difficulty, base_points))
+        inserted += 1
 
     conn.commit()
     conn.close()
@@ -459,6 +457,7 @@ for name, category, difficulty, base_points in missions:
         "status": "Seed complete",
         "missions_inserted": inserted
     })
+
     
 # =====================================================
 # START MISSION
