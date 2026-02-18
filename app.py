@@ -794,14 +794,17 @@ def mission_status():
         "time_left": max(0, 3600 - (time.time() - row[8]))
     }
 
-    pretty = build_mission_pretty(mission, session_stats)
+     pretty = build_mission_pretty(mission, session_stats)
 
     return Response(
         json.dumps({
-            "pretty_text": pretty
+            "pretty_text": pretty,
+            "text": pretty
         }, ensure_ascii=False),
         mimetype="application/json; charset=utf-8"
     )
+
+
 
 # =====================================================
 # START MISSION (CINEMATIC + PRETTY)
@@ -895,21 +898,26 @@ def start_mission():
         "━━━━━━━━━━━━━━━━━━━━"
     )
 
-    return jsonify({
-        "session_id": session_id,
-        "mission_id": mission["id"],
-        "mission_name": mission["name"],
-        "difficulty": mission["difficulty"],
-        "category": mission["category"],
-        "min_unique": mission["min_unique"],
-        "min_total": mission["min_total"],
-        "max_per_avatar": mission["max_per_avatar"],
-        "base_points": mission["base_points"],
-        "bonus_per_unique": mission["bonus_per_unique"],
-        "bonus_per_total": mission["bonus_per_total"],
-        "influence_bonus": mission["influence_bonus"],
-        "pretty_text": pretty_text
-    })
+       return Response(
+        json.dumps({
+            "session_id": session_id,
+            "mission_id": mission["id"],
+            "mission_name": mission["name"],
+            "difficulty": mission["difficulty"],
+            "category": mission["category"],
+            "min_unique": mission["min_unique"],
+            "min_total": mission["min_total"],
+            "max_per_avatar": mission["max_per_avatar"],
+            "base_points": mission["base_points"],
+            "bonus_per_unique": mission["bonus_per_unique"],
+            "bonus_per_total": mission["bonus_per_total"],
+            "influence_bonus": mission["influence_bonus"],
+            "pretty_text": pretty_text,
+            "text": pretty_text
+        }, ensure_ascii=False),
+        mimetype="application/json; charset=utf-8"
+    )
+
 
 # =====================================================
 # ROOT
