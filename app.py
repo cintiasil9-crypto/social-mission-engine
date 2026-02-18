@@ -100,9 +100,10 @@ def init_db():
     conn.close()
 
 
-@app.before_first_request
-def initialize_database():
+try:
     init_db()
+except Exception as e:
+    print("Database init error:", e)
 
 
 # =====================================================
