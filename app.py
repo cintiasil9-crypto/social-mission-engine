@@ -5,6 +5,7 @@ import random
 import time
 from flask import Flask, request, jsonify, Response
 import json
+print("BOOTING SOCIAL MISSION ENGINE")
 
 app = Flask(__name__)
 DB_PATH = "/tmp/mission.db"
