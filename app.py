@@ -774,7 +774,7 @@ def mission_status():
     conn.close()
 
     if not row:
-        return jsonify({"error":"Session not found"}), 404
+        return jsonify({"error": "Session not found"}), 404
 
     mission = {
         "name": row[0],
@@ -787,14 +787,13 @@ def mission_status():
         "description": row[7]
     }
 
-    # You’ll eventually track real stats here
     session_stats = {
         "unique": 0,
         "total": 0,
         "time_left": max(0, 3600 - (time.time() - row[8]))
     }
 
-     pretty = build_mission_pretty(mission, session_stats)
+    pretty = build_mission_pretty(mission, session_stats)
 
     return Response(
         json.dumps({
@@ -803,6 +802,7 @@ def mission_status():
         }, ensure_ascii=False),
         mimetype="application/json; charset=utf-8"
     )
+
 
 
 
@@ -898,7 +898,7 @@ def start_mission():
         "━━━━━━━━━━━━━━━━━━━━"
     )
 
-       return Response(
+    return Response(
         json.dumps({
             "session_id": session_id,
             "mission_id": mission["id"],
