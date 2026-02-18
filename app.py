@@ -3,7 +3,8 @@ import sqlite3
 import uuid
 import random
 import time
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
+import json
 
 app = Flask(__name__)
 DB_PATH = "/tmp/mission.db"
@@ -15,14 +16,17 @@ MISSION_DURATION = 3600  # 1 hour
 # DATABASE INIT
 # =====================================================
 
+# =====================================================
+# DATABASE INIT (FULL EXTENDED SAFE VERSION)
+# =====================================================
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
-    # -------------------------
+    # =================================================
     # PLAYERS TABLE
-    # -------------------------
+    # =================================================
     cur.execute("""
     CREATE TABLE IF NOT EXISTS players (
         uuid TEXT PRIMARY KEY,
@@ -33,9 +37,9 @@ def init_db():
     )
     """)
 
-    # -------------------------
-    # MISSIONS TABLE (ORIGINAL STRUCTURE)
-    # -------------------------
+    # =================================================
+    # MISSIONS TABLE (BASE STRUCTURE)
+    # =================================================
     cur.execute("""
     CREATE TABLE IF NOT EXISTS missions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,12 +50,13 @@ def init_db():
     )
     """)
 
-    # -------------------------
-    # ADD NEW COLUMNS IF MISSING
-    # -------------------------
+    # =================================================
+    # ADD EXTENDED COLUMNS SAFELY
+    # =================================================
     cur.execute("PRAGMA table_info(missions)")
     columns = [row[1] for row in cur.fetchall()]
 
+    # Threshold logic
     if "min_unique" not in columns:
         cur.execute("ALTER TABLE missions ADD COLUMN min_unique INTEGER DEFAULT 3")
 
@@ -61,16 +66,45 @@ def init_db():
     if "max_per_avatar" not in columns:
         cur.execute("ALTER TABLE missions ADD COLUMN max_per_avatar INTEGER DEFAULT 3")
 
-    # -------------------------
-    # ENSURE OLD MISSIONS GET VALUES
-    # -------------------------
+    # Pretty display fields
+    if "description" not in columns:
+        cur.execute("ALTER TABLE missions ADD COLUMN description TEXT")
+
+    if "emoji" not in columns:
+        cur.execute("ALTER TABLE missions ADD COLUMN emoji TEXT DEFAULT '🎯'")
+
+    if "flavor_text" not in columns:
+        cur.execute("ALTER TABLE missions ADD COLUMN flavor_text TEXT")
+
+    if "rarity" not in columns:
+        cur.execute("ALTER TABLE missions ADD COLUMN rarity TEXT DEFAULT 'Common'")
+
+    if "weight" not in columns:
+        cur.execute("ALTER TABLE missions ADD COLUMN weight REAL DEFAULT 1.0")
+
+    # Dynamic scoring bonuses
+    if "bonus_per_unique" not in columns:
+        cur.execute("ALTER TABLE missions ADD COLUMN bonus_per_unique INTEGER DEFAULT 0")
+
+    if "bonus_per_total" not in columns:
+        cur.execute("ALTER TABLE missions ADD COLUMN bonus_per_total INTEGER DEFAULT 0")
+
+    if "influence_bonus" not in columns:
+        cur.execute("ALTER TABLE missions ADD COLUMN influence_bonus REAL DEFAULT 0.0")
+
+    # Ensure NULL values get defaults
     cur.execute("UPDATE missions SET min_unique = 3 WHERE min_unique IS NULL")
     cur.execute("UPDATE missions SET min_total = 5 WHERE min_total IS NULL")
     cur.execute("UPDATE missions SET max_per_avatar = 3 WHERE max_per_avatar IS NULL")
+    cur.execute("UPDATE missions SET weight = 1.0 WHERE weight IS NULL")
+    cur.execute("UPDATE missions SET rarity = 'Common' WHERE rarity IS NULL")
+    cur.execute("UPDATE missions SET bonus_per_unique = 0 WHERE bonus_per_unique IS NULL")
+    cur.execute("UPDATE missions SET bonus_per_total = 0 WHERE bonus_per_total IS NULL")
+    cur.execute("UPDATE missions SET influence_bonus = 0.0 WHERE influence_bonus IS NULL")
 
-    # -------------------------
+    # =================================================
     # MISSION SESSIONS TABLE
-    # -------------------------
+    # =================================================
     cur.execute("""
     CREATE TABLE IF NOT EXISTS mission_sessions (
         id TEXT PRIMARY KEY,
@@ -83,9 +117,9 @@ def init_db():
     )
     """)
 
-    # -------------------------
+    # =================================================
     # MISSION HISTORY TABLE
-    # -------------------------
+    # =================================================
     cur.execute("""
     CREATE TABLE IF NOT EXISTS mission_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,6 +134,7 @@ def init_db():
     conn.close()
 
 
+# Run DB init safely
 try:
     init_db()
 except Exception as e:
@@ -352,68 +387,66 @@ def complete_mission():
         "influence": new_influence,
         "title": get_title(new_influence)
     })
+# =================================================
+# MISSION PRETTY ENGINE
+# =================================================
 
-# =====================================================
-# START MISSION
-# =====================================================
+def progress_bar(current, required, width=10):
+    if required <= 0:
+        return "▒" * width
+    ratio = min(current / required, 1.0)
+    filled = int(ratio * width)
+    return "█" * filled + "▒" * (width - filled)
 
-@app.route("/start-mission", methods=["POST"])
-def start_mission():
-    data = request.get_json()
 
-    uuid_val = data.get("uuid")
-    mode = data.get("mode", "random")
-    value = data.get("value")
+def build_mission_pretty(mission, session=None):
 
-    if not uuid_val:
-        return jsonify({"error": "Missing UUID"}), 400
+    name        = mission["name"]
+    difficulty  = mission["difficulty"]
+    category    = mission["category"]
+    min_unique  = mission["min_unique"]
+    min_total   = mission["min_total"]
+    max_per     = mission["max_per_avatar"]
+    points      = mission["base_points"]
+    desc        = mission.get("description", "Complete the objective.")
 
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
+    # Live session stats (if provided)
+    unique = session.get("unique", 0) if session else 0
+    total  = session.get("total", 0) if session else 0
+    time_left = session.get("time_left", 3600) if session else 3600
 
-    # ===============================
-    # LOAD MISSIONS BASED ON MODE
-    # ===============================
+    pretty = (
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🚀 SOCIAL MISSION\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"🧠 {name}\n"
+        f"🔥 Difficulty: {difficulty}\n"
+        f"📂 Category: {category}\n"
+        f"🎯 Base Points: {points}\n\n"
 
-    if mode == "specific" and value:
-        cur.execute("""
-            SELECT id, name, category, difficulty,
-                   min_unique, min_total, max_per_avatar
-            FROM missions
-            WHERE id = ?
-        """, (value,))
-        missions = cur.fetchall()
+        "📜 OBJECTIVE\n"
+        f"{desc}\n\n"
 
-    elif mode == "category" and value:
-        cur.execute("""
-            SELECT id, name, category, difficulty,
-                   min_unique, min_total, max_per_avatar
-            FROM missions
-            WHERE category = ?
-        """, (value,))
-        missions = cur.fetchall()
+        "📊 REQUIREMENTS\n"
+        f"👥 Unique Replies: {min_unique}\n"
+        f"💬 Total Replies: {min_total}\n"
+        f"⚖ Max per Avatar: {max_per}\n\n"
+    )
 
-    elif mode == "difficulty" and value:
-        cur.execute("""
-            SELECT id, name, category, difficulty,
-                   min_unique, min_total, max_per_avatar
-            FROM missions
-            WHERE difficulty = ?
-        """, (value,))
-        missions = cur.fetchall()
+    if session:
+        pretty += (
+            "📈 LIVE PROGRESS\n"
+            f"👥 Unique: {unique}/{min_unique} "
+            f"{progress_bar(unique, min_unique)}\n"
+            f"💬 Total: {total}/{min_total} "
+            f"{progress_bar(total, min_total)}\n"
+            f"⏳ Time Left: {int(time_left)} sec\n\n"
+        )
 
-    else:
-        # RANDOM DEFAULT
-        cur.execute("""
-            SELECT id, name, category, difficulty,
-                   min_unique, min_total, max_per_avatar
-            FROM missions
-        """)
-        missions = cur.fetchall()
+    pretty += "━━━━━━━━━━━━━━━━━━━━"
 
-    if not missions:
-        conn.close()
-        return jsonify({"error": "No missions found"}), 404
+    return pretty
+
 
     # ===============================
     # RANDOM WEIGHTING IF MULTIPLE
@@ -458,6 +491,157 @@ def start_mission():
         "max_per_avatar": mission[6]
     })
 
+# =====================================================
+# SEED MISSION DESCRIPTIONS (RUN ONCE)
+# =====================================================
+
+@app.route("/seed-mission-descriptions", methods=["POST"])
+def seed_mission_descriptions():
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    updates = [
+
+        # IGNITION
+        ("Engagement Magnet",
+         "🎯",
+         "Pull 3 unique avatars into the conversation and generate 5 total replies.",
+         "Start small. Build momentum. Make the room lean in.",
+         "Common", 1.0),
+
+        ("Topic Seeder",
+         "🌱",
+         "Introduce a topic that sparks at least 4 unique participants and 6 total replies.",
+         "Plant the idea. Let others grow it.",
+         "Common", 1.0),
+
+        ("Spotlight Puller",
+         "🎤",
+         "Draw focused attention from 4 different avatars and generate 8 total replies.",
+         "Own the moment without begging for it.",
+         "Uncommon", 1.2),
+
+        ("Crowd Activator",
+         "🔥",
+         "Activate 5 unique voices and drive 9 total responses.",
+         "Wake the room up.",
+         "Uncommon", 1.2),
+
+        ("Question Instigator",
+         "❓",
+         "Ask something that triggers 3 unique replies and 6 total messages.",
+         "The right question controls everything.",
+         "Common", 1.0),
+
+        ("Momentum Spark",
+         "⚡",
+         "Create fast-paced interaction with 4 unique avatars and 7 total replies.",
+         "Speed is power.",
+         "Uncommon", 1.2),
+
+        ("Social Catalyst",
+         "🧨",
+         "Cause a strong reaction from 6 unique avatars and 12 total replies.",
+         "Disrupt, but stay respected.",
+         "Rare", 1.5),
+
+        ("Echo Trigger",
+         "🔁",
+         "Trigger repeated responses across 3 unique avatars totaling 8 replies.",
+         "Make them respond again.",
+         "Uncommon", 1.2),
+
+        # SUSTAINED
+        ("Energy Architect",
+         "🏗",
+         "Maintain steady engagement with 5 unique avatars and 10 total replies.",
+         "Sustain the rhythm.",
+         "Rare", 1.5),
+
+        ("Pulse Amplifier",
+         "📈",
+         "Drive 6 unique voices into 14 total responses.",
+         "Amplify everything.",
+         "Epic", 1.8),
+
+        ("Room Stabilizer",
+         "🛡",
+         "Keep interaction steady across 4 unique avatars and 9 replies.",
+         "Hold the structure.",
+         "Uncommon", 1.2),
+
+        ("Conversation Driver",
+         "🚗",
+         "Guide 5 unique avatars into 11 total messages.",
+         "You’re steering now.",
+         "Rare", 1.5),
+
+        ("Momentum Keeper",
+         "🔋",
+         "Sustain 6 unique participants and 15 total replies.",
+         "Don’t let it die.",
+         "Epic", 1.8),
+
+        ("Flow Controller",
+         "🌊",
+         "Balance interaction across 5 unique avatars and 10 replies.",
+         "Control the current.",
+         "Rare", 1.5),
+
+        ("Atmosphere Builder",
+         "🌙",
+         "Shape the mood with 6 unique voices and 9 replies.",
+         "Set the emotional tone.",
+         "Rare", 1.5),
+
+        ("Activity Booster",
+         "🚀",
+         "Explode engagement with 7 unique avatars and 16 total replies.",
+         "Push it over the edge.",
+         "Epic", 2.0),
+
+        # CHAIN
+        ("Debate Instigator",
+         "⚔",
+         "Trigger structured disagreement from 6 unique avatars and 14 replies.",
+         "Controlled conflict wins influence.",
+         "Epic", 2.0),
+
+        ("Rivalry Builder",
+         "🔥",
+         "Spark competitive exchange among 5 unique avatars with 12 replies.",
+         "Tension creates movement.",
+         "Epic", 2.0),
+
+        ("Argument Architect",
+         "🏛",
+         "Construct a layered debate across 7 unique avatars and 15 replies.",
+         "Build the structure of opposition.",
+         "Legendary", 2.5),
+
+        ("Conflict Catalyst",
+         "💣",
+         "Ignite high-intensity interaction from 8 unique avatars totaling 18 replies.",
+         "Master chaos. Don’t lose control.",
+         "Legendary", 2.5),
+    ]
+
+    for name, emoji, desc, flavor, rarity, weight in updates:
+        cur.execute("""
+            UPDATE missions
+            SET emoji = ?,
+                description = ?,
+                flavor_text = ?,
+                rarity = ?,
+                weight = ?
+            WHERE name = ?
+        """, (emoji, desc, flavor, rarity, weight, name))
+
+    conn.commit()
+    conn.close()
+
+    return {"status": "Mission descriptions updated"}
 
 # =====================================================
 # LEADERBOARDS
@@ -566,6 +750,165 @@ def seed_missions():
         "missions_inserted": inserted
     })
 
+@app.route("/mission/status", methods=["POST"])
+def mission_status():
+
+    data = request.get_json(silent=True) or {}
+    session_id = data.get("session_id")
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT m.name, m.category, m.difficulty,
+               m.min_unique, m.min_total, m.max_per_avatar,
+               m.base_points, m.description,
+               s.start_time
+        FROM mission_sessions s
+        JOIN missions m ON s.mission_id = m.id
+        WHERE s.id = ?
+    """, (session_id,))
+
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return jsonify({"error":"Session not found"}), 404
+
+    mission = {
+        "name": row[0],
+        "category": row[1],
+        "difficulty": row[2],
+        "min_unique": row[3],
+        "min_total": row[4],
+        "max_per_avatar": row[5],
+        "base_points": row[6],
+        "description": row[7]
+    }
+
+    # You’ll eventually track real stats here
+    session_stats = {
+        "unique": 0,
+        "total": 0,
+        "time_left": max(0, 3600 - (time.time() - row[8]))
+    }
+
+    pretty = build_mission_pretty(mission, session_stats)
+
+    return Response(
+        json.dumps({
+            "pretty_text": pretty
+        }, ensure_ascii=False),
+        mimetype="application/json; charset=utf-8"
+    )
+
+# =====================================================
+# START MISSION (CINEMATIC + PRETTY)
+# =====================================================
+
+@app.route("/start-mission", methods=["POST"])
+def start_mission():
+
+    data = request.get_json(silent=True) or {}
+
+    uuid_val = data.get("uuid")
+    mode = data.get("mode", "random")
+    value = data.get("value")
+
+    if not uuid_val:
+        return jsonify({"error": "Missing UUID"}), 400
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    # ==========================================
+    # LOAD MISSIONS
+    # ==========================================
+
+    if mode == "specific" and value:
+        cur.execute("SELECT * FROM missions WHERE id = ?", (value,))
+    elif mode == "category" and value:
+        cur.execute("SELECT * FROM missions WHERE category = ?", (value,))
+    elif mode == "difficulty" and value:
+        cur.execute("SELECT * FROM missions WHERE difficulty = ?", (value,))
+    else:
+        cur.execute("SELECT * FROM missions")
+
+    missions = cur.fetchall()
+
+    if not missions:
+        conn.close()
+        return jsonify({"error": "No missions found"}), 404
+
+    # ==========================================
+    # WEIGHTED RANDOM (SAFE)
+    # ==========================================
+
+    if len(missions) > 1:
+        weights = [m["weight"] if m["weight"] else 1.0 for m in missions]
+        mission = random.choices(missions, weights=weights, k=1)[0]
+    else:
+        mission = missions[0]
+
+    # ==========================================
+    # CREATE SESSION
+    # ==========================================
+
+    session_id = str(uuid.uuid4())
+    start_time = int(time.time())
+
+    cur.execute("""
+        INSERT INTO mission_sessions
+        (id, player_uuid, mission_id, start_time)
+        VALUES (?, ?, ?, ?)
+    """, (session_id, uuid_val, mission["id"], start_time))
+
+    conn.commit()
+    conn.close()
+
+    # ==========================================
+    # BUILD PRETTY TEXT
+    # ==========================================
+
+    emoji = mission["emoji"] or "🎯"
+    description = mission["description"] or "Complete the objective."
+    flavor = mission["flavor_text"] or ""
+    rarity = mission["rarity"] or "Common"
+
+    pretty_text = (
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"{emoji} {mission['name'].upper()}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎚 Difficulty: {mission['difficulty']}\n"
+        f"📂 Category: {mission['category']}\n"
+        f"💎 Rarity: {rarity}\n\n"
+        "🎯 OBJECTIVE\n"
+        f"{description}\n\n"
+        f"👥 Unique Required: {mission['min_unique']}\n"
+        f"💬 Total Required: {mission['min_total']}\n"
+        f"⚖ Max Per Avatar: {mission['max_per_avatar']}\n\n"
+        f"🏆 Base Points: {mission['base_points']}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"{flavor}\n"
+        "━━━━━━━━━━━━━━━━━━━━"
+    )
+
+    return jsonify({
+        "session_id": session_id,
+        "mission_id": mission["id"],
+        "mission_name": mission["name"],
+        "difficulty": mission["difficulty"],
+        "category": mission["category"],
+        "min_unique": mission["min_unique"],
+        "min_total": mission["min_total"],
+        "max_per_avatar": mission["max_per_avatar"],
+        "base_points": mission["base_points"],
+        "bonus_per_unique": mission["bonus_per_unique"],
+        "bonus_per_total": mission["bonus_per_total"],
+        "influence_bonus": mission["influence_bonus"],
+        "pretty_text": pretty_text
+    })
 
 # =====================================================
 # ROOT
