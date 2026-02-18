@@ -757,51 +757,63 @@ def mission_status():
     data = request.get_json(silent=True) or {}
     session_id = data.get("session_id")
 
+    if not session_id:
+        return jsonify({"error": "Missing session_id"}), 400
+
     conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT m.name, m.category, m.difficulty,
-               m.min_unique, m.min_total, m.max_per_avatar,
-               m.base_points, m.description,
-               s.start_time
+        SELECT m.*, s.start_time
         FROM mission_sessions s
         JOIN missions m ON s.mission_id = m.id
         WHERE s.id = ?
     """, (session_id,))
 
-    row = cur.fetchone()
+    mission = cur.fetchone()
     conn.close()
 
-    if not row:
+    if not mission:
         return jsonify({"error": "Session not found"}), 404
 
-    mission = {
-        "name": row[0],
-        "category": row[1],
-        "difficulty": row[2],
-        "min_unique": row[3],
-        "min_total": row[4],
-        "max_per_avatar": row[5],
-        "base_points": row[6],
-        "description": row[7]
-    }
+    time_left = max(
+        0,
+        MISSION_DURATION - (int(time.time()) - mission["start_time"])
+    )
 
-    session_stats = {
-        "unique": 0,
-        "total": 0,
-        "time_left": max(0, 3600 - (time.time() - row[8]))
-    }
+    emoji = mission["emoji"] or "🎯"
+    description = mission["description"] or "Complete the objective."
+    flavor = mission["flavor_text"] or ""
+    rarity = mission["rarity"] or "Common"
 
-    pretty = build_mission_pretty(mission, session_stats)
+    pretty_text = (
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"{emoji} {mission['name'].upper()} — STATUS\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎚 Difficulty: {mission['difficulty']}\n"
+        f"📂 Category: {mission['category']}\n"
+        f"💎 Rarity: {rarity}\n\n"
+        "🎯 OBJECTIVE\n"
+        f"{description}\n\n"
+        f"👥 Unique Required: {mission['min_unique']}\n"
+        f"💬 Total Required: {mission['min_total']}\n"
+        f"⚖ Max Per Avatar: {mission['max_per_avatar']}\n\n"
+        f"⏳ Time Left: {time_left} sec\n"
+        f"🏆 Base Points: {mission['base_points']}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"{flavor}\n"
+        "━━━━━━━━━━━━━━━━━━━━"
+    )
 
     return Response(
         json.dumps({
-            "pretty_text": pretty,
-            "text": pretty
+            "pretty_text": pretty_text,
+            "text": pretty_text
         }, ensure_ascii=False),
         mimetype="application/json; charset=utf-8"
     )
+
 
 
 
@@ -826,10 +838,9 @@ def start_mission():
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    # ==========================================
-    # LOAD MISSIONS
-    # ==========================================
-
+    # -----------------------------
+    # LOAD MISSIONS BASED ON MODE
+    # -----------------------------
     if mode == "specific" and value:
         cur.execute("SELECT * FROM missions WHERE id = ?", (value,))
     elif mode == "category" and value:
@@ -845,20 +856,18 @@ def start_mission():
         conn.close()
         return jsonify({"error": "No missions found"}), 404
 
-    # ==========================================
-    # WEIGHTED RANDOM (SAFE)
-    # ==========================================
-
+    # -----------------------------
+    # WEIGHTED RANDOM
+    # -----------------------------
     if len(missions) > 1:
         weights = [m["weight"] if m["weight"] else 1.0 for m in missions]
         mission = random.choices(missions, weights=weights, k=1)[0]
     else:
         mission = missions[0]
 
-    # ==========================================
+    # -----------------------------
     # CREATE SESSION
-    # ==========================================
-
+    # -----------------------------
     session_id = str(uuid.uuid4())
     start_time = int(time.time())
 
@@ -870,6 +879,29 @@ def start_mission():
 
     conn.commit()
     conn.close()
+    # ==========================================
+    # BUILD PRETTY USING CENTRAL ENGINE
+    # ==========================================
+
+    mission_dict = dict(mission)
+
+    session_stats = {
+        "unique": 0,
+        "total": 0,
+        "time_left": MISSION_DURATION
+    }
+
+    pretty_text = build_mission_pretty(mission_dict, session_stats)
+
+    return Response(
+        json.dumps({
+            "session_id": session_id,
+            "pretty_text": pretty_text,
+            "text": pretty_text
+        }, ensure_ascii=False),
+        mimetype="application/json; charset=utf-8"
+    )
+
 
     # ==========================================
     # BUILD PRETTY TEXT
