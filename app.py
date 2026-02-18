@@ -15,10 +15,17 @@ MISSION_DURATION = 3600  # 1 hour
 # DATABASE INIT
 # =====================================================
 
+# =====================================================
+# DATABASE INIT
+# =====================================================
+
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
+    # -------------------------
+    # PLAYERS TABLE
+    # -------------------------
     cur.execute("""
     CREATE TABLE IF NOT EXISTS players (
         uuid TEXT PRIMARY KEY,
@@ -29,6 +36,9 @@ def init_db():
     )
     """)
 
+    # -------------------------
+    # MISSIONS TABLE (ORIGINAL STRUCTURE)
+    # -------------------------
     cur.execute("""
     CREATE TABLE IF NOT EXISTS missions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,10 +46,34 @@ def init_db():
         category TEXT,
         difficulty TEXT,
         base_points INTEGER
-)
-
+    )
     """)
 
+    # -------------------------
+    # ADD NEW COLUMNS IF MISSING
+    # -------------------------
+    cur.execute("PRAGMA table_info(missions)")
+    columns = [row[1] for row in cur.fetchall()]
+
+    if "min_unique" not in columns:
+        cur.execute("ALTER TABLE missions ADD COLUMN min_unique INTEGER DEFAULT 3")
+
+    if "min_total" not in columns:
+        cur.execute("ALTER TABLE missions ADD COLUMN min_total INTEGER DEFAULT 5")
+
+    if "max_per_avatar" not in columns:
+        cur.execute("ALTER TABLE missions ADD COLUMN max_per_avatar INTEGER DEFAULT 3")
+
+    # -------------------------
+    # ENSURE OLD MISSIONS GET VALUES
+    # -------------------------
+    cur.execute("UPDATE missions SET min_unique = 3 WHERE min_unique IS NULL")
+    cur.execute("UPDATE missions SET min_total = 5 WHERE min_total IS NULL")
+    cur.execute("UPDATE missions SET max_per_avatar = 3 WHERE max_per_avatar IS NULL")
+
+    # -------------------------
+    # MISSION SESSIONS TABLE
+    # -------------------------
     cur.execute("""
     CREATE TABLE IF NOT EXISTS mission_sessions (
         id TEXT PRIMARY KEY,
@@ -52,6 +86,9 @@ def init_db():
     )
     """)
 
+    # -------------------------
+    # MISSION HISTORY TABLE
+    # -------------------------
     cur.execute("""
     CREATE TABLE IF NOT EXISTS mission_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -414,40 +451,43 @@ def seed_missions():
         cur.execute("DELETE FROM missions")
 
     missions = [
+
         # IGNITION
-        ("Engagement Magnet", "Ignition", "Easy", 50),
-        ("Topic Seeder", "Ignition", "Easy", 50),
-        ("Spotlight Puller", "Ignition", "Medium", 100),
-        ("Crowd Activator", "Ignition", "Medium", 100),
-        ("Question Instigator", "Ignition", "Easy", 50),
-        ("Momentum Spark", "Ignition", "Medium", 100),
-        ("Social Catalyst", "Ignition", "Hard", 200),
-        ("Echo Trigger", "Ignition", "Medium", 100),
+        ("Engagement Magnet", "Ignition", "Easy", 50, 3, 5, 3),
+        ("Topic Seeder", "Ignition", "Easy", 50, 4, 6, 2),
+        ("Spotlight Puller", "Ignition", "Medium", 100, 4, 8, 2),
+        ("Crowd Activator", "Ignition", "Medium", 100, 5, 9, 2),
+        ("Question Instigator", "Ignition", "Easy", 50, 3, 6, 2),
+        ("Momentum Spark", "Ignition", "Medium", 100, 4, 7, 2),
+        ("Social Catalyst", "Ignition", "Hard", 200, 6, 12, 2),
+        ("Echo Trigger", "Ignition", "Medium", 100, 3, 8, 3),
 
         # SUSTAINED
-        ("Energy Architect", "Sustained", "Medium", 100),
-        ("Pulse Amplifier", "Sustained", "Hard", 200),
-        ("Room Stabilizer", "Sustained", "Medium", 100),
-        ("Conversation Driver", "Sustained", "Medium", 100),
-        ("Momentum Keeper", "Sustained", "Hard", 200),
-        ("Flow Controller", "Sustained", "Medium", 100),
-        ("Atmosphere Builder", "Sustained", "Medium", 100),
-        ("Activity Booster", "Sustained", "Hard", 200),
+        ("Energy Architect", "Sustained", "Medium", 100, 5, 10, 2),
+        ("Pulse Amplifier", "Sustained", "Hard", 200, 6, 14, 2),
+        ("Room Stabilizer", "Sustained", "Medium", 100, 4, 9, 2),
+        ("Conversation Driver", "Sustained", "Medium", 100, 5, 11, 2),
+        ("Momentum Keeper", "Sustained", "Hard", 200, 6, 15, 2),
+        ("Flow Controller", "Sustained", "Medium", 100, 5, 10, 2),
+        ("Atmosphere Builder", "Sustained", "Medium", 100, 6, 9, 1),
+        ("Activity Booster", "Sustained", "Hard", 200, 7, 16, 2),
 
         # CHAIN
-        ("Debate Instigator", "Chain", "Hard", 200),
-        ("Rivalry Builder", "Chain", "Hard", 200),
-        ("Argument Architect", "Chain", "Hard", 200),
-        ("Conflict Catalyst", "Chain", "Hard", 200),
+        ("Debate Instigator", "Chain", "Hard", 200, 6, 14, 2),
+        ("Rivalry Builder", "Chain", "Hard", 200, 5, 12, 2),
+        ("Argument Architect", "Chain", "Hard", 200, 7, 15, 2),
+        ("Conflict Catalyst", "Chain", "Hard", 200, 8, 18, 2),
     ]
 
     inserted = 0
 
-    for name, category, difficulty, base_points in missions:
+    for name, category, difficulty, base_points, min_unique, min_total, max_per_avatar in missions:
         cur.execute("""
-            INSERT INTO missions (name, category, difficulty, base_points)
-            VALUES (?, ?, ?, ?)
-        """, (name, category, difficulty, base_points))
+            INSERT INTO missions 
+            (name, category, difficulty, base_points, min_unique, min_total, max_per_avatar)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (name, category, difficulty, base_points,
+              min_unique, min_total, max_per_avatar))
         inserted += 1
 
     conn.commit()
