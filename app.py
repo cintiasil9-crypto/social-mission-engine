@@ -360,21 +360,85 @@ def complete_mission():
 @app.route("/start-mission", methods=["POST"])
 def start_mission():
     data = request.get_json()
+
     uuid_val = data.get("uuid")
+    mode = data.get("mode", "random")
+    value = data.get("value")
 
     if not uuid_val:
         return jsonify({"error": "Missing UUID"}), 400
 
-    mission = get_random_mission(uuid_val)
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
 
-    if not mission:
-        return jsonify({"error": "No missions available"}), 500
+    # ===============================
+    # LOAD MISSIONS BASED ON MODE
+    # ===============================
+
+    if mode == "specific" and value:
+        cur.execute("""
+            SELECT id, name, category, difficulty,
+                   min_unique, min_total, max_per_avatar
+            FROM missions
+            WHERE id = ?
+        """, (value,))
+        missions = cur.fetchall()
+
+    elif mode == "category" and value:
+        cur.execute("""
+            SELECT id, name, category, difficulty,
+                   min_unique, min_total, max_per_avatar
+            FROM missions
+            WHERE category = ?
+        """, (value,))
+        missions = cur.fetchall()
+
+    elif mode == "difficulty" and value:
+        cur.execute("""
+            SELECT id, name, category, difficulty,
+                   min_unique, min_total, max_per_avatar
+            FROM missions
+            WHERE difficulty = ?
+        """, (value,))
+        missions = cur.fetchall()
+
+    else:
+        # RANDOM DEFAULT
+        cur.execute("""
+            SELECT id, name, category, difficulty,
+                   min_unique, min_total, max_per_avatar
+            FROM missions
+        """)
+        missions = cur.fetchall()
+
+    if not missions:
+        conn.close()
+        return jsonify({"error": "No missions found"}), 404
+
+    # ===============================
+    # RANDOM WEIGHTING IF MULTIPLE
+    # ===============================
+
+    if len(missions) > 1:
+        weights = []
+        for m in missions:
+            if m[3] == "Easy":
+                weights.append(0.5)
+            elif m[3] == "Medium":
+                weights.append(0.35)
+            else:
+                weights.append(0.15)
+
+        mission = random.choices(missions, weights=weights, k=1)[0]
+    else:
+        mission = missions[0]
+
+    # ===============================
+    # CREATE SESSION
+    # ===============================
 
     session_id = str(uuid.uuid4())
     start_time = int(time.time())
-
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
 
     cur.execute("""
         INSERT INTO mission_sessions (id, player_uuid, mission_id, start_time)
@@ -388,8 +452,12 @@ def start_mission():
         "session_id": session_id,
         "mission_name": mission[1],
         "category": mission[2],
-        "difficulty": mission[3]
+        "difficulty": mission[3],
+        "min_unique": mission[4],
+        "min_total": mission[5],
+        "max_per_avatar": mission[6]
     })
+
 
 # =====================================================
 # LEADERBOARDS
