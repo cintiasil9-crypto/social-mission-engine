@@ -902,55 +902,6 @@ def start_mission():
         mimetype="application/json; charset=utf-8"
     )
 
-
-    # ==========================================
-    # BUILD PRETTY TEXT
-    # ==========================================
-
-    emoji = mission["emoji"] or "🎯"
-    description = mission["description"] or "Complete the objective."
-    flavor = mission["flavor_text"] or ""
-    rarity = mission["rarity"] or "Common"
-
-    pretty_text = (
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"{emoji} {mission['name'].upper()}\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"🎚 Difficulty: {mission['difficulty']}\n"
-        f"📂 Category: {mission['category']}\n"
-        f"💎 Rarity: {rarity}\n\n"
-        "🎯 OBJECTIVE\n"
-        f"{description}\n\n"
-        f"👥 Unique Required: {mission['min_unique']}\n"
-        f"💬 Total Required: {mission['min_total']}\n"
-        f"⚖ Max Per Avatar: {mission['max_per_avatar']}\n\n"
-        f"🏆 Base Points: {mission['base_points']}\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"{flavor}\n"
-        "━━━━━━━━━━━━━━━━━━━━"
-    )
-
-    return Response(
-        json.dumps({
-            "session_id": session_id,
-            "mission_id": mission["id"],
-            "mission_name": mission["name"],
-            "difficulty": mission["difficulty"],
-            "category": mission["category"],
-            "min_unique": mission["min_unique"],
-            "min_total": mission["min_total"],
-            "max_per_avatar": mission["max_per_avatar"],
-            "base_points": mission["base_points"],
-            "bonus_per_unique": mission["bonus_per_unique"],
-            "bonus_per_total": mission["bonus_per_total"],
-            "influence_bonus": mission["influence_bonus"],
-            "pretty_text": pretty_text,
-            "text": pretty_text
-        }, ensure_ascii=False),
-        mimetype="application/json; charset=utf-8"
-    )
-
-
 # =====================================================
 # ROOT
 # =====================================================
