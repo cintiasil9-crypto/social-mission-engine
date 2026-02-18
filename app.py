@@ -6,7 +6,7 @@ import time
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
-DB_PATH = "mission.db"
+DB_PATH = "/tmp/mission.db"
 
 MISSION_DURATION = 3600  # 1 hour
 
@@ -15,9 +15,6 @@ MISSION_DURATION = 3600  # 1 hour
 # DATABASE INIT
 # =====================================================
 
-# =====================================================
-# DATABASE INIT
-# =====================================================
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -103,7 +100,9 @@ def init_db():
     conn.close()
 
 
-init_db()
+@app.before_first_request
+def initialize_database():
+    init_db()
 
 
 # =====================================================
