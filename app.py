@@ -8,7 +8,7 @@ import json
 print("BOOTING SOCIAL MISSION ENGINE")
 
 app = Flask(__name__)
-DB_PATH = "/var/data/mission.db"
+DB_PATH = "/tmp/mission.db"
 
 MISSION_DURATION = 3600  # 1 hour
 
@@ -681,7 +681,81 @@ def seed_mission_descriptions():
 # =====================================================
 # LEADERBOARDS
 # =====================================================
+# =====================================================
+# FULL MISSION SESSION LEADERBOARD
+# =====================================================
 
+@app.route("/leaderboard/sessions")
+def leaderboard_sessions():
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            s.id                AS session_id,
+            s.player_uuid       AS uuid,
+            p.username          AS username,
+            m.name              AS mission_name,
+            m.category          AS category,
+            m.difficulty        AS difficulty,
+            m.base_points       AS base_points,
+            s.start_time        AS start_time,
+            s.completed         AS completed,
+            s.success           AS success,
+            p.total_points      AS total_points,
+            p.influence         AS influence
+        FROM mission_sessions s
+        JOIN players p ON s.player_uuid = p.uuid
+        JOIN missions m ON s.mission_id = m.id
+        ORDER BY s.start_time DESC
+        LIMIT 200
+    """)
+
+    rows = [dict(row) for row in cur.fetchall()]
+    conn.close()
+
+    return jsonify(rows)
+
+# =====================================================
+# GLOBAL PLAYER RANKINGS
+# =====================================================
+
+@app.route("/leaderboard/players")
+def leaderboard_players():
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            uuid,
+            username,
+            total_points,
+            influence,
+            (
+                SELECT COUNT(*)
+                FROM mission_history h
+                WHERE h.player_uuid = players.uuid
+            ) AS missions_played,
+            (
+                SELECT COUNT(*)
+                FROM mission_history h
+                WHERE h.player_uuid = players.uuid
+                AND h.success = 1
+            ) AS missions_won
+        FROM players
+        ORDER BY influence DESC
+        LIMIT 100
+    """)
+
+    rows = [dict(row) for row in cur.fetchall()]
+    conn.close()
+
+    return jsonify(rows)
+    
 @app.route("/leaderboard/points")
 def leaderboard_points():
     conn = sqlite3.connect(DB_PATH)
@@ -790,6 +864,8 @@ def mission_status():
 
     data = request.get_json(silent=True) or {}
     session_id = data.get("session_id")
+    unique = int(data.get("unique", 0))
+    total = int(data.get("total", 0))
 
     if not session_id:
         return jsonify({"error": "Missing session_id"}), 400
@@ -816,39 +892,22 @@ def mission_status():
         MISSION_DURATION - (int(time.time()) - mission["start_time"])
     )
 
-    emoji = mission["emoji"] or "🎯"
-    description = mission["description"] or "Complete the objective."
-    flavor = mission["flavor_text"] or ""
-    rarity = mission["rarity"] or "Common"
-
     pretty_text = (
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"{emoji} {mission['name'].upper()} — STATUS\n"
+        f"📊 LIVE PROGRESS\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"🎚 Difficulty: {mission['difficulty']}\n"
-        f"📂 Category: {mission['category']}\n"
-        f"💎 Rarity: {rarity}\n\n"
-        "🎯 OBJECTIVE\n"
-        f"{description}\n\n"
-        f"👥 Unique Required: {mission['min_unique']}\n"
-        f"💬 Total Required: {mission['min_total']}\n"
-        f"⚖ Max Per Avatar: {mission['max_per_avatar']}\n\n"
+        f"👥 Unique: {unique}/{mission['min_unique']} "
+        f"{progress_bar(unique, mission['min_unique'])}\n"
+        f"💬 Total: {total}/{mission['min_total']} "
+        f"{progress_bar(total, mission['min_total'])}\n"
         f"⏳ Time Left: {time_left} sec\n"
-        f"🏆 Base Points: {mission['base_points']}\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"{flavor}\n"
         "━━━━━━━━━━━━━━━━━━━━"
     )
 
     return Response(
-        json.dumps({
-            "pretty_text": pretty_text,
-            "text": pretty_text
-        }, ensure_ascii=False),
+        json.dumps({"pretty_text": pretty_text}, ensure_ascii=False),
         mimetype="application/json; charset=utf-8"
     )
-
-
 
 
 
@@ -953,20 +1012,44 @@ def debug_missions():
 def home():
     return "Social Mission Engine Running"
 
+def auto_seed_if_empty():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
 
+    # Ensure missions table exists
+    cur.execute("""
+        SELECT name FROM sqlite_master
+        WHERE type='table' AND name='missions'
+    """)
+    table_exists = cur.fetchone()
+
+    if not table_exists:
+        conn.close()
+        return
+
+    # Check mission count
+    cur.execute("SELECT COUNT(*) FROM missions")
+    count = cur.fetchone()[0]
+    conn.close()
+
+    if count == 0:
+        print("Auto-seeding missions...")
+
+        # Use internal Flask test client
+        with app.test_client() as client:
+            client.post("/seed-missions", json={
+                "secret": os.environ.get("ADMIN_SECRET", "changeme"),
+                "reset": False
+            })
+            client.post("/seed-mission-descriptions")
 # =====================================================
 # BOOT SEQUENCE
 # =====================================================
 
-try:
-    init_db()
-    auto_seed_if_empty()
-except Exception as e:
-    print("Database init error:", e)
+init_db()
+auto_seed_if_empty()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-print("REGISTERED ROUTES:")
-print(app.url_map)
 
