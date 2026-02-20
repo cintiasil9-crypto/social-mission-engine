@@ -134,30 +134,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-    # Ensure missions table exists first
-    cur.execute("""
-        SELECT name FROM sqlite_master
-        WHERE type='table' AND name='missions'
-    """)
-    table_exists = cur.fetchone()
-
-    if not table_exists:
-        conn.close()
-        return  # Table not ready yet
-
-    cur.execute("SELECT COUNT(*) FROM missions")
-    count = cur.fetchone()[0]
-    conn.close()
-
-    if count == 0:
-        print("Auto seeding missions...")
-        with app.test_client() as c:
-            c.post("/seed-missions", json={
-                "secret": os.environ.get("ADMIN_SECRET", "changeme"),
-                "reset": False
-            })
-            c.post("/seed-mission-descriptions")
-
 
 # =====================================================
 # TITLE SYSTEM
@@ -1038,7 +1014,7 @@ def auto_seed_if_empty():
         # Use internal Flask test client
         with app.test_client() as client:
             client.post("/seed-missions", json={
-                "secret": os.environ.get("ADMIN_SECRET", "changeme"),
+                "secret": os.environ.get("ADMIN_SECRET", "yourStrongSecretHere"),
                 "reset": False
             })
             client.post("/seed-mission-descriptions")
