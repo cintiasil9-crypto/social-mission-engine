@@ -8,7 +8,7 @@ import json
 print("BOOTING SOCIAL MISSION ENGINE")
 
 app = Flask(__name__)
-DB_PATH = "mission.db"
+DB_PATH = "/var/data/mission.db"
 
 MISSION_DURATION = 3600  # 1 hour
 
@@ -133,17 +133,6 @@ def init_db():
 
     conn.commit()
     conn.close()
-
-# Run DB init safely
-try:
-    init_db()
-    auto_seed_if_empty()
-except Exception as e:
-    print("Database init error:", e)
-
-def auto_seed_if_empty():
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
 
     # Ensure missions table exists first
     cur.execute("""
@@ -966,13 +955,18 @@ def home():
 
 
 # =====================================================
-# RUN
+# BOOT SEQUENCE
 # =====================================================
+
+try:
+    init_db()
+    auto_seed_if_empty()
+except Exception as e:
+    print("Database init error:", e)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
 print("REGISTERED ROUTES:")
 print(app.url_map)
 
