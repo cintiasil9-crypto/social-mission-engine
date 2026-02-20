@@ -137,6 +137,7 @@ def init_db():
 # Run DB init safely
 try:
     init_db()
+    auto_seed_if_empty()
 except Exception as e:
     print("Database init error:", e)
 
@@ -410,11 +411,28 @@ def complete_mission():
     conn.commit()
     conn.close()
 
-    return jsonify({
-        "success": success,
-        "influence": new_influence,
-        "title": get_title(new_influence)
-    })
+    title = get_title(new_influence)
+
+    pretty_text = (
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🏁 MISSION RESULT\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"{'✅ SUCCESS' if success else '❌ FAILED'}\n\n"
+        f"📈 Influence: {round(new_influence,2)}\n"
+        f"🏆 Title: {title}\n"
+        "━━━━━━━━━━━━━━━━━━━━"
+    )
+
+    return Response(
+        json.dumps({
+            "success": success,
+            "influence": new_influence,
+            "title": title,
+            "pretty_text": pretty_text
+        }, ensure_ascii=False),
+        mimetype="application/json; charset=utf-8"
+    )
+
 # =================================================
 # MISSION PRETTY ENGINE
 # =================================================
