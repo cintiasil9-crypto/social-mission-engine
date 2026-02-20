@@ -134,6 +134,23 @@ def init_db():
     conn.commit()
     conn.close()
 
+def auto_seed_if_empty():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM missions")
+    count = cur.fetchone()[0]
+    conn.close()
+
+    if count == 0:
+        print("Auto seeding missions...")
+        with app.test_client() as c:
+            c.post("/seed-missions", json={
+                "secret": os.environ.get("ADMIN_SECRET", "changeme"),
+                "reset": False
+            })
+            c.post("/seed-mission-descriptions")
+
+auto_seed_if_empty()
 
 # Run DB init safely
 try:
@@ -642,7 +659,7 @@ def seed_mission_descriptions():
     conn.commit()
     conn.close()
 
-    return {"status": "Mission descriptions updated"}
+    return jsonify({"status": "Mission descriptions updated"})
 
 # =====================================================
 # LEADERBOARDS
@@ -901,6 +918,15 @@ def start_mission():
         }, ensure_ascii=False),
         mimetype="application/json; charset=utf-8"
     )
+
+@app.route("/debug-missions")
+def debug_missions():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT name, description FROM missions")
+    rows = cur.fetchall()
+    conn.close()
+    return jsonify(rows)
 
 # =====================================================
 # ROOT
