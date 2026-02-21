@@ -8,7 +8,7 @@ import json
 print("BOOTING SOCIAL MISSION ENGINE")
 
 app = Flask(__name__)
-DB_PATH = "/tmp/mission.db"
+DB_PATH = "mission.db"
 
 MISSION_DURATION = 3600  # 1 hour
 
