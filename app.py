@@ -1007,7 +1007,9 @@ def mission_status():
         mimetype="application/json; charset=utf-8"
     )
 
-
+@app.route("/health")
+def health():
+    return "OK", 200
 
 # =====================================================
 # START MISSION (CINEMATIC + PRETTY)
@@ -1142,9 +1144,14 @@ def auto_seed_if_empty():
                 "reset": False
             })
             client.post("/seed-mission-descriptions")
+
+
 # =====================================================
 # BOOT SEQUENCE
 # =====================================================
 
 init_db()
 
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
