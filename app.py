@@ -963,13 +963,15 @@ def start_mission():
     pretty_text = build_mission_pretty(mission_dict, session_stats)
 
     return Response(
-        json.dumps({
-            "session_id": session_id,
-            "pretty_text": pretty_text,
-            "text": pretty_text
-        }, ensure_ascii=False),
-        mimetype="application/json; charset=utf-8"
-    )
+    json.dumps({
+        "session_id": session_id,
+        "min_unique": mission["min_unique"],
+        "min_total": mission["min_total"],
+        "max_per_avatar": mission["max_per_avatar"],
+        "pretty_text": pretty_text
+    }, ensure_ascii=False),
+    mimetype="application/json; charset=utf-8"
+)
 
 @app.route("/debug-missions")
 def debug_missions():
