@@ -1147,9 +1147,4 @@ def auto_seed_if_empty():
 # =====================================================
 
 init_db()
-auto_seed_if_empty()
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
 
