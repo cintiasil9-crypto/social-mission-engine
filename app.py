@@ -671,7 +671,6 @@ def leaderboard_sessions():
     cur.execute("""
         SELECT
             s.id                AS session_id,
-            s.player_uuid       AS uuid,
             p.username          AS username,
             m.name              AS mission_name,
             m.category          AS category,
@@ -679,9 +678,7 @@ def leaderboard_sessions():
             m.base_points       AS base_points,
             s.start_time        AS start_time,
             s.completed         AS completed,
-            s.success           AS success,
-            p.total_points      AS total_points,
-            p.influence         AS influence
+            s.success           AS success
         FROM mission_sessions s
         JOIN players p ON s.player_uuid = p.uuid
         JOIN missions m ON s.mission_id = m.id
@@ -689,10 +686,79 @@ def leaderboard_sessions():
         LIMIT 200
     """)
 
-    rows = [dict(row) for row in cur.fetchall()]
+    rows = cur.fetchall()
     conn.close()
 
-    return jsonify(rows)
+    html = """
+    <html>
+    <head>
+        <title>Mission Sessions</title>
+        <style>
+            body { font-family:Arial; background:#eef2f7; padding:30px; }
+            h1 { text-align:center; }
+            table {
+                border-collapse:collapse;
+                width:100%;
+                background:white;
+                box-shadow:0 4px 12px rgba(0,0,0,0.1);
+            }
+            th, td {
+                padding:10px;
+                border-bottom:1px solid #ddd;
+                text-align:center;
+            }
+            th {
+                background:#111827;
+                color:white;
+            }
+            .success { color:green; font-weight:bold; }
+            .fail { color:red; font-weight:bold; }
+        </style>
+    </head>
+    <body>
+        <h1>📊 Mission Session History</h1>
+        <table>
+            <tr>
+                <th>Player</th>
+                <th>Mission</th>
+                <th>Category</th>
+                <th>Difficulty</th>
+                <th>Points</th>
+                <th>Status</th>
+            </tr>
+    """
+
+    for row in rows:
+        status = "⏳ Active"
+        css = ""
+
+        if row["completed"]:
+            if row["success"]:
+                status = "✅ Success"
+                css = "success"
+            else:
+                status = "❌ Failed"
+                css = "fail"
+
+        html += f"""
+            <tr>
+                <td>{row['username']}</td>
+                <td>{row['mission_name']}</td>
+                <td>{row['category']}</td>
+                <td>{row['difficulty']}</td>
+                <td>{row['base_points']}</td>
+                <td class="{css}">{status}</td>
+            </tr>
+        """
+
+    html += """
+        </table>
+    </body>
+    </html>
+    """
+
+    return html
+    
 
 # =====================================================
 # GLOBAL PLAYER RANKINGS
@@ -727,27 +793,83 @@ def leaderboard_players():
         LIMIT 100
     """)
 
-    rows = [dict(row) for row in cur.fetchall()]
-    conn.close()
-
-    return jsonify(rows)
-    
-@app.route("/leaderboard/points")
-def leaderboard_points():
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT username, total_points
-        FROM players
-        ORDER BY total_points DESC
-        LIMIT 50
-    """)
     rows = cur.fetchall()
     conn.close()
 
-    return jsonify(rows)
+    html = """
+    <html>
+    <head>
+        <title>Player Leaderboard</title>
+        <style>
+            body {
+                font-family: Arial;
+                background:#f4f6f9;
+                padding:30px;
+            }
+            h1 {
+                text-align:center;
+            }
+            table {
+                border-collapse: collapse;
+                width:100%;
+                background:white;
+                box-shadow:0 4px 12px rgba(0,0,0,0.1);
+            }
+            th, td {
+                padding:12px;
+                text-align:center;
+                border-bottom:1px solid #ddd;
+            }
+            th {
+                background:#1f2937;
+                color:white;
+            }
+            tr:hover {
+                background:#f1f1f1;
+            }
+            .rank {
+                font-weight:bold;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>🏆 Global Player Rankings</h1>
+        <table>
+            <tr>
+                <th>#</th>
+                <th>Username</th>
+                <th>Influence</th>
+                <th>Total Points</th>
+                <th>Missions Played</th>
+                <th>Missions Won</th>
+                <th>Win %</th>
+            </tr>
+    """
 
+    for i, row in enumerate(rows, start=1):
+        winrate = 0
+        if row["missions_played"] > 0:
+            winrate = round((row["missions_won"] / row["missions_played"]) * 100, 1)
+
+        html += f"""
+            <tr>
+                <td class="rank">{i}</td>
+                <td>{row['username']}</td>
+                <td>{round(row['influence'],2)}</td>
+                <td>{row['total_points']}</td>
+                <td>{row['missions_played']}</td>
+                <td>{row['missions_won']}</td>
+                <td>{winrate}%</td>
+            </tr>
+        """
+
+    html += """
+        </table>
+    </body>
+    </html>
+    """
+
+    return html
 
 @app.route("/leaderboard/influence")
 def leaderboard_influence():
