@@ -1240,6 +1240,51 @@ def debug_missions():
     conn.close()
     return jsonify(rows)
 
+@app.route("/mission/resume", methods=["POST"])
+def resume_mission():
+
+    data = request.get_json(silent=True) or {}
+    uuid_val = data.get("uuid")
+
+    if not uuid_val:
+        return jsonify({"error": "Missing UUID"}), 400
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT s.id,
+               s.start_time,
+               s.scaled_min_unique,
+               s.scaled_min_total,
+               m.max_per_avatar
+        FROM mission_sessions s
+        JOIN missions m ON s.mission_id = m.id
+        WHERE s.player_uuid = ?
+        AND s.completed = 0
+        ORDER BY s.start_time DESC
+        LIMIT 1
+    """, (uuid_val,))
+
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return jsonify({"active": False})
+
+    elapsed = int(time.time()) - row["start_time"]
+    time_left = max(0, MISSION_DURATION - elapsed)
+
+    return jsonify({
+        "active": True,
+        "session_id": row["id"],
+        "min_unique": row["scaled_min_unique"],
+        "min_total": row["scaled_min_total"],
+        "max_per_avatar": row["max_per_avatar"],
+        "time_left": time_left
+    })
+    
 # =====================================================
 # ROOT
 # =====================================================
