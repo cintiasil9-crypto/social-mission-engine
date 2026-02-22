@@ -14,10 +14,6 @@ MISSION_DURATION = 3600  # 1 hour
 
 
 # =====================================================
-# DATABASE INIT
-# =====================================================
-
-# =====================================================
 # DATABASE INIT (FULL EXTENDED SAFE VERSION)
 # =====================================================
 
@@ -52,12 +48,11 @@ def init_db():
     """)
 
     # =================================================
-    # ADD EXTENDED COLUMNS SAFELY
+    # ADD EXTENDED MISSION COLUMNS SAFELY
     # =================================================
     cur.execute("PRAGMA table_info(missions)")
     columns = [row[1] for row in cur.fetchall()]
 
-    # Threshold logic
     if "min_unique" not in columns:
         cur.execute("ALTER TABLE missions ADD COLUMN min_unique INTEGER DEFAULT 3")
 
@@ -67,7 +62,6 @@ def init_db():
     if "max_per_avatar" not in columns:
         cur.execute("ALTER TABLE missions ADD COLUMN max_per_avatar INTEGER DEFAULT 3")
 
-    # Pretty display fields
     if "description" not in columns:
         cur.execute("ALTER TABLE missions ADD COLUMN description TEXT")
 
@@ -83,7 +77,6 @@ def init_db():
     if "weight" not in columns:
         cur.execute("ALTER TABLE missions ADD COLUMN weight REAL DEFAULT 1.0")
 
-    # Dynamic scoring bonuses
     if "bonus_per_unique" not in columns:
         cur.execute("ALTER TABLE missions ADD COLUMN bonus_per_unique INTEGER DEFAULT 0")
 
@@ -93,7 +86,7 @@ def init_db():
     if "influence_bonus" not in columns:
         cur.execute("ALTER TABLE missions ADD COLUMN influence_bonus REAL DEFAULT 0.0")
 
-    # Ensure NULL values get defaults
+    # Ensure NULL values are corrected
     cur.execute("UPDATE missions SET min_unique = 3 WHERE min_unique IS NULL")
     cur.execute("UPDATE missions SET min_total = 5 WHERE min_total IS NULL")
     cur.execute("UPDATE missions SET max_per_avatar = 3 WHERE max_per_avatar IS NULL")
@@ -104,7 +97,7 @@ def init_db():
     cur.execute("UPDATE missions SET influence_bonus = 0.0 WHERE influence_bonus IS NULL")
 
     # =================================================
-    # MISSION SESSIONS TABLE
+    # MISSION SESSIONS TABLE (STATE MODEL)
     # =================================================
     cur.execute("""
     CREATE TABLE IF NOT EXISTS mission_sessions (
@@ -112,24 +105,33 @@ def init_db():
         player_uuid TEXT,
         mission_id INTEGER,
         start_time INTEGER,
-        completed INTEGER DEFAULT 0,
+        end_time INTEGER,
+        scaled_min_unique INTEGER,
+        scaled_min_total INTEGER,
+        status TEXT,
         success INTEGER DEFAULT 0,
         FOREIGN KEY(player_uuid) REFERENCES players(uuid)
     )
     """)
 
-# =================================================
-# ENSURE SCALED THRESHOLD COLUMNS EXIST
-# =================================================
-
+    # =================================================
+    # MIGRATION PATCH (SAFE TO RUN MULTIPLE TIMES)
+    # =================================================
     cur.execute("PRAGMA table_info(mission_sessions)")
     session_columns = [row[1] for row in cur.fetchall()]
+
+    if "end_time" not in session_columns:
+        cur.execute("ALTER TABLE mission_sessions ADD COLUMN end_time INTEGER")
 
     if "scaled_min_unique" not in session_columns:
         cur.execute("ALTER TABLE mission_sessions ADD COLUMN scaled_min_unique INTEGER")
 
     if "scaled_min_total" not in session_columns:
         cur.execute("ALTER TABLE mission_sessions ADD COLUMN scaled_min_total INTEGER")
+
+    if "status" not in session_columns:
+        cur.execute("ALTER TABLE mission_sessions ADD COLUMN status TEXT")
+
     # =================================================
     # MISSION HISTORY TABLE
     # =================================================
@@ -145,7 +147,6 @@ def init_db():
 
     conn.commit()
     conn.close()
-
 
 # =====================================================
 # TITLE SYSTEM
@@ -323,7 +324,7 @@ def get_random_mission(player_uuid):
     return mission
 
 # =====================================================
-# COMPLETE MISSION (HARDENED + SERVER VALIDATION)
+# COMPLETE MISSION (STATE SAFE + STATUS MODEL)
 # =====================================================
 
 @app.route("/complete-mission", methods=["POST"])
@@ -343,7 +344,7 @@ def complete_mission():
     cur = conn.cursor()
 
     # =================================================
-    # FETCH ACTIVE SESSION
+    # FETCH ACTIVE SESSION (STATUS MODEL)
     # =================================================
 
     cur.execute("""
@@ -353,14 +354,15 @@ def complete_mission():
                scaled_min_unique,
                scaled_min_total
         FROM mission_sessions
-        WHERE id = ? AND completed = 0
+        WHERE id = ?
+        AND status = 'active'
     """, (session_id,))
 
     session = cur.fetchone()
 
     if not session:
         conn.close()
-        return jsonify({"error": "Invalid or completed session"}), 400
+        return jsonify({"error": "Invalid or inactive session"}), 400
 
     player_uuid = session["player_uuid"]
     mission_id  = session["mission_id"]
@@ -374,23 +376,22 @@ def complete_mission():
     success = True
 
     # =================================================
-    # 1️⃣ MAX DURATION CHECK (1 hour hard limit)
+    # 1️⃣ MAX DURATION CHECK
     # =================================================
 
     if elapsed > MISSION_DURATION:
         success = False
 
     # =================================================
-    # 2️⃣ MINIMUM DURATION CHECK (10 min anti-speedrun)
+    # 2️⃣ MINIMUM DURATION CHECK
     # =================================================
 
     MIN_DURATION = 600  # 10 minutes
-
     if elapsed < MIN_DURATION:
         success = False
 
     # =================================================
-    # 3️⃣ SERVER-SIDE THRESHOLD VALIDATION
+    # 3️⃣ SERVER VALIDATION
     # =================================================
 
     if unique < req_unique or total < req_total:
@@ -408,11 +409,11 @@ def complete_mission():
 
     mission = cur.fetchone()
 
-    difficulty = mission["difficulty"]
+    difficulty  = mission["difficulty"]
     base_points = mission["base_points"]
 
     # =================================================
-    # APPLY REWARDS IF SUCCESS
+    # APPLY REWARDS
     # =================================================
 
     if success:
@@ -423,7 +424,7 @@ def complete_mission():
         """, (base_points, player_uuid))
 
     # =================================================
-    # INSERT INTO HISTORY
+    # INSERT HISTORY
     # =================================================
 
     cur.execute("""
@@ -433,15 +434,17 @@ def complete_mission():
     """, (player_uuid, difficulty, int(success), now))
 
     # =================================================
-    # MARK SESSION COMPLETE
+    # UPDATE SESSION STATUS (CRITICAL FIX)
     # =================================================
+
+    new_status = "completed" if success else "failed"
 
     cur.execute("""
         UPDATE mission_sessions
-        SET completed = 1,
-            success = ?
+        SET status = ?,
+            end_time = ?
         WHERE id = ?
-    """, (int(success), session_id))
+    """, (new_status, now, session_id))
 
     conn.commit()
 
@@ -728,7 +731,7 @@ def leaderboard_sessions():
             m.difficulty        AS difficulty,
             m.base_points       AS base_points,
             s.start_time        AS start_time,
-            s.completed         AS completed,
+            s.status            AS status,
             s.success           AS success
         FROM mission_sessions s
         JOIN players p ON s.player_uuid = p.uuid
@@ -745,7 +748,7 @@ def leaderboard_sessions():
     <head>
         <title>Mission Sessions</title>
         <style>
-            body { font-family:Arial; background:#eef2f7; padding:30px; }
+            body { font-family: Arial; background:#eef2f7; padding:30px; }
             h1 { text-align:center; }
             table {
                 border-collapse:collapse;
@@ -764,6 +767,7 @@ def leaderboard_sessions():
             }
             .success { color:green; font-weight:bold; }
             .fail { color:red; font-weight:bold; }
+            .active { color:#f59e0b; font-weight:bold; }
         </style>
     </head>
     <body>
@@ -780,16 +784,15 @@ def leaderboard_sessions():
     """
 
     for row in rows:
-        status = "⏳ Active"
-        css = ""
+        status_label = "⏳ Active"
+        css = "active"
 
-        if row["completed"]:
-            if row["success"]:
-                status = "✅ Success"
-                css = "success"
-            else:
-                status = "❌ Failed"
-                css = "fail"
+        if row["status"] == "completed":
+            status_label = "✅ Success"
+            css = "success"
+        elif row["status"] == "failed":
+            status_label = "❌ Failed"
+            css = "fail"
 
         html += f"""
             <tr>
@@ -798,7 +801,7 @@ def leaderboard_sessions():
                 <td>{row['category']}</td>
                 <td>{row['difficulty']}</td>
                 <td>{row['base_points']}</td>
-                <td class="{css}">{status}</td>
+                <td class="{css}">{status_label}</td>
             </tr>
         """
 
@@ -1071,7 +1074,7 @@ def health():
     return "OK", 200
 
 # =====================================================
-# START MISSION (SCALED + COOLDOWN + PRETTY)
+# START MISSION (ACTIVE SAFE + PROPER COOLDOWN)
 # =====================================================
 
 @app.route("/start-mission", methods=["POST"])
@@ -1091,22 +1094,61 @@ def start_mission():
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    # =============================
-    # 1️⃣ COOLDOWN CHECK (1 hour)
-    # =============================
+    # =====================================================
+    # 1️⃣ CHECK FOR ACTIVE SESSION FIRST
+    # =====================================================
+
+    cur.execute("""
+        SELECT ms.*, m.*
+        FROM mission_sessions ms
+        JOIN missions m ON ms.mission_id = m.id
+        WHERE ms.player_uuid = ?
+        AND ms.status = 'active'
+        LIMIT 1
+    """, (uuid_val,))
+
+    active = cur.fetchone()
+
+    if active:
+        conn.close()
+
+        mission_dict = dict(active)
+        mission_dict["min_unique"] = active["scaled_min_unique"]
+        mission_dict["min_total"]  = active["scaled_min_total"]
+
+        session_stats = {
+            "unique": 0,
+            "total": 0,
+            "time_left": MISSION_DURATION
+        }
+
+        pretty_text = build_mission_pretty(mission_dict, session_stats)
+
+        return jsonify({
+            "session_id": active["id"],
+            "min_unique": active["scaled_min_unique"],
+            "min_total": active["scaled_min_total"],
+            "max_per_avatar": active["max_per_avatar"],
+            "pretty_text": pretty_text
+        })
+
+    # =====================================================
+    # 2️⃣ COOLDOWN CHECK (ONLY COMPLETED/FAILED)
+    # =====================================================
 
     cur.execute("""
         SELECT start_time
         FROM mission_sessions
         WHERE player_uuid = ?
+        AND status IN ('completed','failed')
         ORDER BY start_time DESC
         LIMIT 1
     """, (uuid_val,))
 
-    last = cur.fetchone()
+    last_completed = cur.fetchone()
 
-    if last:
-        elapsed = int(time.time()) - last["start_time"]
+    if last_completed:
+        elapsed = int(time.time()) - last_completed["start_time"]
         if elapsed < 3600:
             conn.close()
             return jsonify({
@@ -1114,9 +1156,9 @@ def start_mission():
                 "cooldown_seconds": 3600 - elapsed
             }), 429
 
-    # =============================
-    # 2️⃣ LOAD MISSIONS
-    # =============================
+    # =====================================================
+    # 3️⃣ LOAD MISSIONS
+    # =====================================================
 
     if mode == "specific" and value:
         cur.execute("SELECT * FROM missions WHERE id = ?", (value,))
@@ -1133,9 +1175,9 @@ def start_mission():
         conn.close()
         return jsonify({"error": "No missions found"}), 404
 
-    # =============================
-    # 3️⃣ WEIGHTED RANDOM
-    # =============================
+    # =====================================================
+    # 4️⃣ WEIGHTED RANDOM
+    # =====================================================
 
     if len(missions) > 1:
         weights = [m["weight"] if m["weight"] else 1.0 for m in missions]
@@ -1143,9 +1185,9 @@ def start_mission():
     else:
         mission = missions[0]
 
-    # =============================
-    # 4️⃣ POPULATION SCALING
-    # =============================
+    # =====================================================
+    # 5️⃣ POPULATION SCALING
+    # =====================================================
 
     scale = 1.0
 
@@ -1163,9 +1205,9 @@ def start_mission():
     min_unique = max(3, int(mission["min_unique"] * scale))
     min_total  = max(5, int(mission["min_total"] * scale))
 
-    # =============================
-    # 5️⃣ INFLUENCE SCALING
-    # =============================
+    # =====================================================
+    # 6️⃣ INFLUENCE SCALING
+    # =====================================================
 
     cur.execute("SELECT influence FROM players WHERE uuid = ?", (uuid_val,))
     player = cur.fetchone()
@@ -1180,9 +1222,9 @@ def start_mission():
             min_unique = int(min_unique * 1.15)
             min_total  = int(min_total * 1.15)
 
-    # =============================
-    # 6️⃣ CREATE SESSION
-    # =============================
+    # =====================================================
+    # 7️⃣ CREATE NEW SESSION
+    # =====================================================
 
     session_id = str(uuid.uuid4())
     start_time = int(time.time())
@@ -1190,8 +1232,8 @@ def start_mission():
     cur.execute("""
         INSERT INTO mission_sessions
         (id, player_uuid, mission_id, start_time,
-         scaled_min_unique, scaled_min_total)
-        VALUES (?, ?, ?, ?, ?, ?)
+         scaled_min_unique, scaled_min_total, status)
+        VALUES (?, ?, ?, ?, ?, ?, 'active')
     """, (
         session_id,
         uuid_val,
@@ -1204,9 +1246,9 @@ def start_mission():
     conn.commit()
     conn.close()
 
-    # =============================
+    # =====================================================
     # BUILD PRETTY OUTPUT
-    # =============================
+    # =====================================================
 
     mission_dict = dict(mission)
     mission_dict["min_unique"] = min_unique
@@ -1220,16 +1262,13 @@ def start_mission():
 
     pretty_text = build_mission_pretty(mission_dict, session_stats)
 
-    return Response(
-        json.dumps({
-            "session_id": session_id,
-            "min_unique": min_unique,
-            "min_total": min_total,
-            "max_per_avatar": mission["max_per_avatar"],
-            "pretty_text": pretty_text
-        }, ensure_ascii=False),
-        mimetype="application/json; charset=utf-8"
-    )
+    return jsonify({
+        "session_id": session_id,
+        "min_unique": min_unique,
+        "min_total": min_total,
+        "max_per_avatar": mission["max_per_avatar"],
+        "pretty_text": pretty_text
+    })
 
 @app.route("/debug-missions")
 def debug_missions():
@@ -1262,7 +1301,7 @@ def resume_mission():
         FROM mission_sessions s
         JOIN missions m ON s.mission_id = m.id
         WHERE s.player_uuid = ?
-        AND s.completed = 0
+        AND s.status = 'active'
         ORDER BY s.start_time DESC
         LIMIT 1
     """, (uuid_val,))
